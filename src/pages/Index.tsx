@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import haplLogo from '@/assets/hapl-logo.png';
 import { useContents, usePlatforms } from '@/hooks/use-contents';
 import { SearchBar } from '@/components/SearchBar';
 import { PlatformFilter } from '@/components/PlatformFilter';
@@ -43,15 +44,7 @@ const Index = () => {
       <header className="sticky top-0 z-50 bg-background/80 backdrop-blur-xl border-b border-border/50">
         <div className="container max-w-lg mx-auto px-4 py-4">
           <div className="flex items-center gap-2 mb-1">
-            <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
-              <Tv className="h-4 w-4 text-primary-foreground" />
-            </div>
-            <h1 className="font-heading text-xl font-bold text-foreground tracking-tight">
-              Hapl
-            </h1>
-            <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
-              Hangi Platform?
-            </span>
+            <img src={haplLogo} alt="Hapl - Hangi Platform" className="h-9 rounded-lg object-contain" />
             <Link to="/admin" className="ml-auto">
               <div className="h-8 w-8 rounded-lg bg-secondary hover:bg-secondary/80 flex items-center justify-center transition-colors">
                 <Plus className="h-4 w-4 text-secondary-foreground" />

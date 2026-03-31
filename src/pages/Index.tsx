@@ -65,6 +65,16 @@ const Index = () => {
         {/* Platform Filter */}
         {platforms && <PlatformFilter platforms={platforms} selected={selectedPlatform} onSelect={setSelectedPlatform} />}
 
+        {/* Advanced Filters */}
+        <AdvancedFilter
+          selectedGenres={selectedGenres}
+          onGenresChange={setSelectedGenres}
+          selectedOrigin={selectedOrigin}
+          onOriginChange={setSelectedOrigin}
+          selectedStatus={selectedStatus}
+          onStatusChange={setSelectedStatus}
+        />
+
         {/* Stats */}
         <div className="flex gap-3 text-xs text-muted-foreground">
           <span>{stats.total} içerik</span>

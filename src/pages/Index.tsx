@@ -4,18 +4,25 @@ import { SearchBar } from '@/components/SearchBar';
 import { PlatformFilter } from '@/components/PlatformFilter';
 import { ContentCard } from '@/components/ContentCard';
 import { TypeFilter } from '@/components/TypeFilter';
+import { AdvancedFilter } from '@/components/AdvancedFilter';
 import { Tv, Loader2 } from 'lucide-react';
 
 const Index = () => {
   const [search, setSearch] = useState('');
   const [selectedPlatform, setSelectedPlatform] = useState<string | undefined>();
   const [selectedType, setSelectedType] = useState<string | undefined>();
+  const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
+  const [selectedOrigin, setSelectedOrigin] = useState<string | undefined>();
+  const [selectedStatus, setSelectedStatus] = useState<string | undefined>();
 
   const { data: platforms, isLoading: platformsLoading } = usePlatforms();
   const { data: contents, isLoading: contentsLoading } = useContents({
     search: search || undefined,
     platformId: selectedPlatform,
     contentType: selectedType,
+    origin: selectedOrigin,
+    status: selectedStatus,
+    genres: selectedGenres.length > 0 ? selectedGenres : undefined,
   });
 
   const isLoading = platformsLoading || contentsLoading;

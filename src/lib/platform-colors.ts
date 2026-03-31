@@ -27,6 +27,11 @@ export const platformTextColorMap: Record<string, string> = {
   tabii: 'text-platform-tabii',
   mubi: 'text-platform-mubi',
   'bein-connect': 'text-platform-bein',
+  'hbo-max': 'text-platform-hbo',
+  'apple-tv-plus': 'text-platform-appletv',
+  puhutv: 'text-platform-puhutv',
+  'tv-plus': 'text-platform-tvplus',
+  'dsmart-go': 'text-platform-dsmart',
 };
 
 export const statusLabels: Record<string, string> = {

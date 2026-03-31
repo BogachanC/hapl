@@ -62,6 +62,11 @@ export default {
           tabii: "hsl(var(--tabii))",
           mubi: "hsl(var(--mubi-color))",
           bein: "hsl(var(--bein))",
+          hbo: "hsl(var(--hbo))",
+          appletv: "hsl(var(--apple-tv))",
+          puhutv: "hsl(var(--puhutv))",
+          tvplus: "hsl(var(--tv-plus))",
+          dsmart: "hsl(var(--dsmart))",
         },
       },
       borderRadius: {

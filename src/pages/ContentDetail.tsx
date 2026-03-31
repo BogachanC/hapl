@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useContent, Platform } from '@/hooks/use-contents';
-import { platformColorMap, platformTextColorMap, statusLabels, statusColors } from '@/lib/platform-colors';
+import { getPlatformStyle, statusLabels, statusColors } from '@/lib/platform-colors';
 import { ArrowLeft, Calendar, Film, Tv, Globe, Flag, Loader2, Clapperboard } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -89,19 +89,20 @@ const ContentDetail = () => {
       <div className="container max-w-lg mx-auto px-5 -mt-24 relative z-10 pb-12 space-y-6">
         {/* Platform badges — MOST PROMINENT */}
         <div className="flex gap-2 flex-wrap">
-          {allPlatforms.map((p) => (
-            <div
-              key={p.id}
-              className={cn(
-                'px-5 py-2.5 rounded-2xl text-sm font-extrabold tracking-wide uppercase shadow-xl',
-                platformColorMap[p.slug] || 'bg-primary',
-                'text-primary-foreground'
-              )}
-              style={{ textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}
-            >
-              {p.name}
-            </div>
-          ))}
+          {allPlatforms.map((p) => {
+            const style = getPlatformStyle(p.slug);
+            return (
+              <div
+                key={p.id}
+                className={cn(
+                  'px-5 py-2.5 rounded-2xl text-sm font-extrabold tracking-wide uppercase shadow-xl',
+                  style.bg, style.text
+                )}
+              >
+                {p.name}
+              </div>
+            );
+          })}
         </div>
 
         {/* Title & meta */}

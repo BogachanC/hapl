@@ -37,20 +37,18 @@
     --radius: 0.75rem;
 
     --netflix: 0 85% 50%;
-    --exxen: 25 100% 50%;
-    --exxen: 25 100% 50%;
-    --gain: 145 100% 39%;
-    --disney: 226 87% 44%;
-    --prime: 195 100% 44%;
-    --tod: 340 100% 50%;
-    --tabii: 260 70% 54%;
-    --mubi-color: 220 100% 50%;
-    --bein: 24 100% 50%;
-    --hbo: 275 80% 55%;
-    --apple-tv: 0 0% 10%;
-    --puhutv: 195 100% 44%;
-    --tv-plus: 25 100% 50%;
-    --dsmart: 0 85% 47%;
+    --exxen: 45 100% 50%;
+    --gain: 0 0% 60%;
+    --disney: 220 80% 30%;
+    --prime: 200 80% 60%;
+    --tod: 0 0% 8%;
+    --tabii: 0 0% 8%;
+    --mubi-color: 220 80% 50%;
+    --bein: 270 70% 50%;
+    --hbo: 0 0% 100%;
+    --puhutv: 50 100% 55%;
+    --tv-plus: 45 90% 35%;
+    --dsmart: 25 100% 50%;
 
     --font-heading: 'Plus Jakarta Sans', sans-serif;
     --font-body: 'DM Sans', sans-serif;

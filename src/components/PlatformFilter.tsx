@@ -1,5 +1,5 @@
 import { Platform } from '@/hooks/use-contents';
-import { platformColorMap } from '@/lib/platform-colors';
+import { getPlatformStyle } from '@/lib/platform-colors';
 import { cn } from '@/lib/utils';
 
 interface PlatformFilterProps {
@@ -22,20 +22,23 @@ export function PlatformFilter({ platforms, selected, onSelect }: PlatformFilter
       >
         Tümü
       </button>
-      {platforms.map((p) => (
-        <button
-          key={p.id}
-          onClick={() => onSelect(selected === p.id ? undefined : p.id)}
-          className={cn(
-            'shrink-0 px-4 py-2.5 rounded-xl text-xs font-bold transition-all border',
-            selected === p.id
-              ? `${platformColorMap[p.slug] || 'bg-primary'} text-primary-foreground border-transparent shadow-lg`
-              : 'bg-secondary text-secondary-foreground border-border/50 hover:bg-secondary/80'
-          )}
-        >
-          {p.name}
-        </button>
-      ))}
+      {platforms.map((p) => {
+        const style = getPlatformStyle(p.slug);
+        return (
+          <button
+            key={p.id}
+            onClick={() => onSelect(selected === p.id ? undefined : p.id)}
+            className={cn(
+              'shrink-0 px-4 py-2.5 rounded-xl text-xs font-bold transition-all border',
+              selected === p.id
+                ? `${style.bg} ${style.text} border-transparent shadow-lg`
+                : 'bg-secondary text-secondary-foreground border-border/50 hover:bg-secondary/80'
+            )}
+          >
+            {p.name}
+          </button>
+        );
+      })}
     </div>
   );
 }

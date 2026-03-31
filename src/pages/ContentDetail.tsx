@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useContent, Platform } from '@/hooks/use-contents';
 import { platformColorMap, statusLabels, statusColors } from '@/lib/platform-colors';
@@ -16,6 +17,7 @@ function getAllPlatforms(content: { platforms: Platform; content_platforms?: { p
 const ContentDetail = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [imgError, setImgError] = useState(false);
   const { data: content, isLoading } = useContent(id || '');
 
   if (isLoading) {
@@ -42,11 +44,12 @@ const ContentDetail = () => {
       {/* Hero Poster */}
       <div className="relative">
         <div className="aspect-[2/3] max-h-[60vh] w-full overflow-hidden bg-gradient-to-br from-secondary to-muted">
-          {content.poster_url ? (
+          {content.poster_url && !imgError ? (
             <img
               src={content.poster_url}
               alt={content.title}
               className="w-full h-full object-cover"
+              onError={() => setImgError(true)}
             />
           ) : content.content_type === 'dizi' ? (
             <div className="w-full h-full flex items-center justify-center">

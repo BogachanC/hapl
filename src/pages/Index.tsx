@@ -5,7 +5,8 @@ import { PlatformFilter } from '@/components/PlatformFilter';
 import { ContentCard } from '@/components/ContentCard';
 import { TypeFilter } from '@/components/TypeFilter';
 import { AdvancedFilter } from '@/components/AdvancedFilter';
-import { Tv, Loader2 } from 'lucide-react';
+import { Tv, Loader2, Plus } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 const Index = () => {
   const [search, setSearch] = useState('');
@@ -51,6 +52,11 @@ const Index = () => {
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
               Hangi Platform?
             </span>
+            <Link to="/admin" className="ml-auto">
+              <div className="h-8 w-8 rounded-lg bg-secondary hover:bg-secondary/80 flex items-center justify-center transition-colors">
+                <Plus className="h-4 w-4 text-secondary-foreground" />
+              </div>
+            </Link>
           </div>
         </div>
       </header>

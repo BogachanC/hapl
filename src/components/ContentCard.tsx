@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { Content } from '@/hooks/use-contents';
 import { platformColorMap, statusLabels, statusColors } from '@/lib/platform-colors';
 import { Film, Tv, Calendar } from 'lucide-react';
@@ -11,9 +12,18 @@ interface ContentCardProps {
 export function ContentCard({ content, index }: ContentCardProps) {
   const platform = content.platforms;
 
+  // Gather all platforms from junction table
+  const allPlatforms = new Map<string, typeof platform>();
+  allPlatforms.set(platform.id, platform);
+  content.content_platforms?.forEach((cp) => {
+    if (cp.platforms) allPlatforms.set(cp.platforms.id, cp.platforms);
+  });
+  const platformList = Array.from(allPlatforms.values());
+
   return (
-    <div
-      className="bg-card rounded-lg overflow-hidden border border-border/50 hover:border-border transition-all animate-fade-in group"
+    <Link
+      to={`/content/${content.id}`}
+      className="bg-card rounded-lg overflow-hidden border border-border/50 hover:border-border transition-all animate-fade-in group block"
       style={{ animationDelay: `${index * 60}ms` }}
     >
       {/* Poster */}

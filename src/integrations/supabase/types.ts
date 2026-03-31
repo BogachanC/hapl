@@ -14,7 +14,83 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      contents: {
+        Row: {
+          content_type: Database["public"]["Enums"]["content_type"]
+          created_at: string
+          description: string | null
+          genre: string[] | null
+          id: string
+          platform_id: string
+          poster_url: string | null
+          release_year: number | null
+          status: Database["public"]["Enums"]["content_status"]
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          content_type?: Database["public"]["Enums"]["content_type"]
+          created_at?: string
+          description?: string | null
+          genre?: string[] | null
+          id?: string
+          platform_id: string
+          poster_url?: string | null
+          release_year?: number | null
+          status?: Database["public"]["Enums"]["content_status"]
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          content_type?: Database["public"]["Enums"]["content_type"]
+          created_at?: string
+          description?: string | null
+          genre?: string[] | null
+          id?: string
+          platform_id?: string
+          poster_url?: string | null
+          release_year?: number | null
+          status?: Database["public"]["Enums"]["content_status"]
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "contents_platform_id_fkey"
+            columns: ["platform_id"]
+            isOneToOne: false
+            referencedRelation: "platforms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      platforms: {
+        Row: {
+          color: string
+          created_at: string
+          id: string
+          logo_url: string | null
+          name: string
+          slug: string
+        }
+        Insert: {
+          color?: string
+          created_at?: string
+          id?: string
+          logo_url?: string | null
+          name: string
+          slug: string
+        }
+        Update: {
+          color?: string
+          created_at?: string
+          id?: string
+          logo_url?: string | null
+          name?: string
+          slug?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -23,7 +99,8 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
-      [_ in never]: never
+      content_status: "yayinda" | "yakinda" | "bitti"
+      content_type: "dizi" | "film"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +227,9 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      content_status: ["yayinda", "yakinda", "bitti"],
+      content_type: ["dizi", "film"],
+    },
   },
 } as const

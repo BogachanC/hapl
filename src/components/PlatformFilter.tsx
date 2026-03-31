@@ -1,5 +1,5 @@
 import { Platform } from '@/hooks/use-contents';
-import { platformColorMap } from '@/lib/platform-colors';
+import { getPlatformStyle } from '@/lib/platform-colors';
 import { cn } from '@/lib/utils';
 
 interface PlatformFilterProps {

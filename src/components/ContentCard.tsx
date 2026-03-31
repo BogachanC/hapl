@@ -30,12 +30,13 @@ export function ContentCard({ content, index }: ContentCardProps) {
     >
       {/* Poster */}
       <div className="relative aspect-[2/3] bg-gradient-to-br from-secondary to-muted flex items-center justify-center overflow-hidden">
-        {content.poster_url ? (
+        {content.poster_url && !imgError ? (
           <img
             src={content.poster_url}
             alt={content.title}
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
             loading="lazy"
+            onError={() => setImgError(true)}
           />
         ) : content.content_type === 'dizi' ? (
           <Tv className="h-10 w-10 text-muted-foreground/40" />

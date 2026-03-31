@@ -5,7 +5,8 @@ import { PlatformFilter } from '@/components/PlatformFilter';
 import { ContentCard } from '@/components/ContentCard';
 import { TypeFilter } from '@/components/TypeFilter';
 import { AdvancedFilter } from '@/components/AdvancedFilter';
-import { Tv, Loader2 } from 'lucide-react';
+import { Tv, Loader2, Plus } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 const Index = () => {
   const [search, setSearch] = useState('');

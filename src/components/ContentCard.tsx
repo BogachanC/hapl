@@ -46,9 +46,11 @@ export function ContentCard({ content, index }: ContentCardProps) {
 
         {/* Gradient overlay */}
         <div className="absolute inset-0 bg-gradient-to-t from-card via-transparent to-transparent" />
+      </div>
 
-        {/* Status badge */}
-        <span className={cn('absolute top-2 right-2 z-10 px-2 py-0.5 rounded-full text-[10px] font-medium backdrop-blur-sm', statusColors[content.status])}>
+      {/* Status badge - below poster */}
+      <div className="px-3 pt-2">
+        <span className={cn('inline-block px-2 py-0.5 rounded-full text-[10px] font-medium', statusColors[content.status])}>
           {statusLabels[content.status]}
         </span>
       </div>

@@ -14,8 +14,8 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
-  const token = Deno.env.get("TMDB_API_TOKEN");
-  if (!token) {
+  const apiKey = Deno.env.get("TMDB_API_TOKEN");
+  if (!apiKey) {
     return new Response(JSON.stringify({ error: "TMDB_API_TOKEN not configured" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -24,18 +24,12 @@ serve(async (req) => {
 
   try {
     const { action, query, tmdb_id, content_type } = await req.json();
-    const headers = {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    };
 
     if (action === "search") {
       const type = content_type === "film" ? "movie" : "tv";
-      const url = `${TMDB_BASE}/search/${type}?query=${encodeURIComponent(query)}&language=tr-TR&page=1`;
-      console.log("TMDB search URL:", url);
-      const res = await fetch(url, { headers });
+      const url = `${TMDB_BASE}/search/${type}?api_key=${apiKey}&query=${encodeURIComponent(query)}&language=tr-TR&page=1`;
+      const res = await fetch(url);
       const data = await res.json();
-      console.log("TMDB response status:", res.status, "results count:", data.results?.length, "raw:", JSON.stringify(data).substring(0, 500));
 
       const results = (data.results || []).slice(0, 10).map((item: any) => ({
         tmdb_id: item.id,
@@ -56,8 +50,8 @@ serve(async (req) => {
 
     if (action === "details") {
       const type = content_type === "film" ? "movie" : "tv";
-      const url = `${TMDB_BASE}/${type}/${tmdb_id}?language=tr-TR`;
-      const res = await fetch(url, { headers });
+      const url = `${TMDB_BASE}/${type}/${tmdb_id}?api_key=${apiKey}&language=tr-TR`;
+      const res = await fetch(url);
       const item = await res.json();
 
       const detail = {

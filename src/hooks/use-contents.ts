@@ -87,8 +87,25 @@ export function useContents(filters?: {
       const { data, error } = await query;
       if (error) throw error;
       
+      // Deduplicate by title — merge platforms into a single card
+      const titleMap = new Map<string, Content>();
+      for (const item of data as Content[]) {
+        const existing = titleMap.get(item.title);
+        if (existing) {
+          // Merge this item's platform into existing content_platforms
+          if (!existing.content_platforms) {
+            existing.content_platforms = [{ platform_id: existing.platform_id, platforms: existing.platforms }];
+          }
+          existing.content_platforms.push({ platform_id: item.platform_id, platforms: item.platforms });
+          item.content_platforms?.forEach(cp => existing.content_platforms!.push(cp));
+        } else {
+          titleMap.set(item.title, { ...item });
+        }
+      }
+      const deduped = Array.from(titleMap.values());
+      
       // Shuffle for random order on each load
-      const shuffled = (data as Content[]).sort(() => Math.random() - 0.5);
+      const shuffled = deduped.sort(() => Math.random() - 0.5);
       return shuffled;
     },
   });

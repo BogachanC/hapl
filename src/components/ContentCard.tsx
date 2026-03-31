@@ -11,6 +11,7 @@ interface ContentCardProps {
 }
 
 export function ContentCard({ content, index }: ContentCardProps) {
+  const [imgError, setImgError] = useState(false);
   const platform = content.platforms;
 
   // Gather all platforms from junction table

@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import haplLogo from '@/assets/hapl-logo.png';
 import { useContents, usePlatforms } from '@/hooks/use-contents';
 import { SearchBar } from '@/components/SearchBar';
@@ -18,7 +18,7 @@ const Index = () => {
   const [selectedStatus, setSelectedStatus] = useState<string | undefined>();
 
   const { data: platforms, isLoading: platformsLoading } = usePlatforms();
-  const { data: contents, isLoading: contentsLoading } = useContents({
+  const { data: contentsData, isLoading: contentsLoading, fetchNextPage, hasNextPage, isFetchingNextPage } = useContents({
     search: search || undefined,
     platformId: selectedPlatform,
     contentType: selectedType,
@@ -27,17 +27,21 @@ const Index = () => {
     genres: selectedGenres.length > 0 ? selectedGenres : undefined,
   });
 
+  const allContents = useMemo(() => contentsData?.pages.flat() ?? [], [contentsData]);
   const isLoading = platformsLoading || contentsLoading;
 
-  const stats = useMemo(() => {
-    if (!contents) return { total: 0, dizi: 0, film: 0, belgesel: 0 };
-    return {
-      total: contents.length,
-      dizi: contents.filter((c) => c.content_type === 'dizi').length,
-      film: contents.filter((c) => c.content_type === 'film').length,
-      belgesel: contents.filter((c) => c.content_type === 'belgesel').length,
-    };
-  }, [contents]);
+  // Infinite scroll observer
+  const observerRef = useRef<IntersectionObserver | null>(null);
+  const loadMoreRef = useCallback((node: HTMLDivElement | null) => {
+    if (isFetchingNextPage) return;
+    if (observerRef.current) observerRef.current.disconnect();
+    observerRef.current = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting && hasNextPage) {
+        fetchNextPage();
+      }
+    });
+    if (node) observerRef.current.observe(node);
+  }, [isFetchingNextPage, hasNextPage, fetchNextPage]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -78,18 +82,23 @@ const Index = () => {
           onStatusChange={setSelectedStatus}
         />
 
-
         {/* Content Grid */}
         {isLoading ? (
           <div className="flex items-center justify-center py-20">
             <Loader2 className="h-6 w-6 animate-spin text-primary" />
           </div>
-        ) : contents && contents.length > 0 ? (
-          <div className="grid grid-cols-3 gap-2.5 pb-8">
-            {contents.map((content, i) => (
-              <ContentCard key={content.id} content={content} index={i} />
-            ))}
-          </div>
+        ) : allContents.length > 0 ? (
+          <>
+            <div className="grid grid-cols-3 gap-2.5 pb-4">
+              {allContents.map((content, i) => (
+                <ContentCard key={content.id} content={content} index={i} />
+              ))}
+            </div>
+            {/* Infinite scroll trigger */}
+            <div ref={loadMoreRef} className="flex items-center justify-center py-4">
+              {isFetchingNextPage && <Loader2 className="h-5 w-5 animate-spin text-primary" />}
+            </div>
+          </>
         ) : (
           <div className="text-center py-20 space-y-2">
             <Tv className="h-10 w-10 text-muted-foreground/30 mx-auto" />

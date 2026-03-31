@@ -55,7 +55,25 @@ export function ContentCard({ content, index }: ContentCardProps) {
         <div className="absolute inset-0 bg-gradient-to-t from-card/90 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
       </div>
 
-      <div className="p-2.5 space-y-1.5">
+      <div className="p-2 space-y-1.5">
+        {/* Platforms - most prominent */}
+        <div className="flex flex-wrap gap-1">
+          {platformList.map((p) => (
+            <div
+              key={p.id}
+              className={cn(
+                'shrink-0 px-2.5 py-1 rounded-md text-[10px] font-extrabold tracking-wide uppercase',
+                platformColorMap[p.slug] || 'bg-primary',
+                'text-primary-foreground'
+              )}
+            >
+              {p.name}
+            </div>
+          ))}
+        </div>
+
+        <h3 className="font-heading font-bold text-xs text-foreground truncate leading-tight">{content.title}</h3>
+
         {/* Status + Year row */}
         <div className="flex items-center justify-between gap-1">
           <span className={cn('px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider', statusColors[content.status])}>
@@ -68,33 +86,6 @@ export function ContentCard({ content, index }: ContentCardProps) {
             </span>
           )}
         </div>
-
-        <h3 className="font-heading font-bold text-xs text-foreground truncate leading-tight">{content.title}</h3>
-
-        <div className="flex flex-wrap gap-1">
-          {platformList.map((p) => (
-            <div
-              key={p.id}
-              className={cn(
-                'shrink-0 px-2 py-0.5 rounded-md text-[8px] font-bold tracking-wide',
-                platformColorMap[p.slug] || 'bg-primary',
-                'text-primary-foreground'
-              )}
-            >
-              {p.name}
-            </div>
-          ))}
-        </div>
-
-        {content.genre && content.genre.length > 0 && (
-          <div className="flex gap-1 flex-wrap">
-            {content.genre.slice(0, 2).map((g) => (
-              <span key={g} className="text-[8px] px-1.5 py-0.5 bg-secondary/80 rounded text-secondary-foreground">
-                {g}
-              </span>
-            ))}
-          </div>
-        )}
       </div>
     </Link>
   );

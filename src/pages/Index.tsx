@@ -44,7 +44,7 @@ const Index = () => {
       <header className="sticky top-0 z-50 bg-background/80 backdrop-blur-xl border-b border-border/50">
         <div className="container max-w-lg mx-auto px-4 py-4">
           <div className="flex items-center gap-2 mb-1">
-            <img src={haplLogo} alt="Hapl - Hangi Platform" className="h-10 w-auto object-contain drop-shadow-md" />
+            <img src={haplLogo} alt="Hapl - Hangi Platform" className="h-14 w-auto object-contain" />
             <Link to="/admin" className="ml-auto">
               <div className="h-8 w-8 rounded-lg bg-secondary hover:bg-secondary/80 flex items-center justify-center transition-colors">
                 <Plus className="h-4 w-4 text-secondary-foreground" />

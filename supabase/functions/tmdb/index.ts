@@ -32,8 +32,10 @@ serve(async (req) => {
     if (action === "search") {
       const type = content_type === "film" ? "movie" : "tv";
       const url = `${TMDB_BASE}/search/${type}?query=${encodeURIComponent(query)}&language=tr-TR&page=1`;
+      console.log("TMDB search URL:", url);
       const res = await fetch(url, { headers });
       const data = await res.json();
+      console.log("TMDB response status:", res.status, "results count:", data.results?.length, "raw:", JSON.stringify(data).substring(0, 500));
 
       const results = (data.results || []).slice(0, 10).map((item: any) => ({
         tmdb_id: item.id,

@@ -21,6 +21,7 @@ export type Database = {
           description: string | null
           genre: string[] | null
           id: string
+          origin: Database["public"]["Enums"]["content_origin"]
           platform_id: string
           poster_url: string | null
           release_year: number | null
@@ -34,6 +35,7 @@ export type Database = {
           description?: string | null
           genre?: string[] | null
           id?: string
+          origin?: Database["public"]["Enums"]["content_origin"]
           platform_id: string
           poster_url?: string | null
           release_year?: number | null
@@ -47,6 +49,7 @@ export type Database = {
           description?: string | null
           genre?: string[] | null
           id?: string
+          origin?: Database["public"]["Enums"]["content_origin"]
           platform_id?: string
           poster_url?: string | null
           release_year?: number | null
@@ -99,6 +102,7 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
+      content_origin: "yerli" | "yabanci"
       content_status: "yayinda" | "yakinda" | "bitti"
       content_type: "dizi" | "film"
     }
@@ -228,6 +232,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
+      content_origin: ["yerli", "yabanci"],
       content_status: ["yayinda", "yakinda", "bitti"],
       content_type: ["dizi", "film"],
     },

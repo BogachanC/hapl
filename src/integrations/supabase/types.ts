@@ -14,6 +14,42 @@ export type Database = {
   }
   public: {
     Tables: {
+      content_platforms: {
+        Row: {
+          content_id: string
+          created_at: string
+          id: string
+          platform_id: string
+        }
+        Insert: {
+          content_id: string
+          created_at?: string
+          id?: string
+          platform_id: string
+        }
+        Update: {
+          content_id?: string
+          created_at?: string
+          id?: string
+          platform_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "content_platforms_content_id_fkey"
+            columns: ["content_id"]
+            isOneToOne: false
+            referencedRelation: "contents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "content_platforms_platform_id_fkey"
+            columns: ["platform_id"]
+            isOneToOne: false
+            referencedRelation: "platforms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       contents: {
         Row: {
           content_type: Database["public"]["Enums"]["content_type"]

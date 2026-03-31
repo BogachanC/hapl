@@ -9,6 +9,11 @@ export type Platform = {
   color: string;
 };
 
+export type ContentPlatform = {
+  platform_id: string;
+  platforms: Platform;
+};
+
 export type Content = {
   id: string;
   title: string;
@@ -21,6 +26,7 @@ export type Content = {
   release_year: number | null;
   platform_id: string;
   platforms: Platform;
+  content_platforms?: ContentPlatform[];
 };
 
 export function usePlatforms() {
@@ -50,7 +56,7 @@ export function useContents(filters?: {
     queryFn: async () => {
       let query = supabase
         .from('contents')
-        .select('*, platforms(*)')
+        .select('*, platforms(*), content_platforms(platform_id, platforms(*))')
         .order('created_at', { ascending: false });
 
       if (filters?.platformId) {
@@ -76,5 +82,21 @@ export function useContents(filters?: {
       if (error) throw error;
       return data as Content[];
     },
+  });
+}
+
+export function useContent(id: string) {
+  return useQuery({
+    queryKey: ['content', id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('contents')
+        .select('*, platforms(*), content_platforms(platform_id, platforms(*))')
+        .eq('id', id)
+        .single();
+      if (error) throw error;
+      return data as Content;
+    },
+    enabled: !!id,
   });
 }

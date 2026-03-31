@@ -47,7 +47,7 @@ const Index = () => {
           <div className="flex items-center gap-3 mb-1">
             <img src={haplLogo} alt="Hapl - Hangi Platform" className="h-28 w-auto object-contain" />
             <div className="flex flex-col">
-              <span className="text-base font-semibold text-muted-foreground tracking-widest uppercase" style={{ fontFamily: "'Playfair Display', serif" }}>İçeriğin Adresi</span>
+              <span className="text-sm font-extrabold text-muted-foreground tracking-widest uppercase font-heading">İçeriğin Adresi</span>
             </div>
             <Link to="/admin" className="ml-auto">
               <div className="h-8 w-8 rounded-lg bg-secondary hover:bg-secondary/80 flex items-center justify-center transition-colors">

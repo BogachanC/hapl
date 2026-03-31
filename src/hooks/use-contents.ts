@@ -1,4 +1,4 @@
-import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 
 export type Platform = {
@@ -44,7 +44,8 @@ export function usePlatforms() {
   });
 }
 
-const PAGE_SIZE = 21;
+export const PAGE_SIZE = 21;
+export const MAX_ITEMS = 105;
 
 export function useContents(filters?: {
   search?: string;
@@ -53,15 +54,16 @@ export function useContents(filters?: {
   status?: string;
   origin?: string;
   genres?: string[];
+  limit?: number;
 }) {
-  return useInfiniteQuery({
+  return useQuery({
     queryKey: ['contents', filters],
-    queryFn: async ({ pageParam = 0 }) => {
+    queryFn: async () => {
+      const limit = Math.min(filters?.limit ?? PAGE_SIZE, MAX_ITEMS);
       let query = supabase
         .from('contents')
         .select('*, platforms(*), content_platforms(platform_id, platforms(*))')
-        .order('created_at', { ascending: false })
-        .range(pageParam * PAGE_SIZE, (pageParam + 1) * PAGE_SIZE - 1);
+        .limit(limit);
 
       if (filters?.platformId) {
         query = query.eq('platform_id', filters.platformId);
@@ -84,12 +86,10 @@ export function useContents(filters?: {
 
       const { data, error } = await query;
       if (error) throw error;
-      return data as Content[];
-    },
-    initialPageParam: 0,
-    getNextPageParam: (lastPage, allPages) => {
-      if (!lastPage || lastPage.length < PAGE_SIZE) return undefined;
-      return allPages.length;
+      
+      // Shuffle for random order on each load
+      const shuffled = (data as Content[]).sort(() => Math.random() - 0.5);
+      return shuffled;
     },
   });
 }

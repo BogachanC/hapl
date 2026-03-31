@@ -82,6 +82,8 @@ const Index = () => {
           <span>{stats.dizi} dizi</span>
           <span>•</span>
           <span>{stats.film} film</span>
+          <span>•</span>
+          <span>{stats.belgesel} belgesel</span>
         </div>
 
         {/* Content Grid */}

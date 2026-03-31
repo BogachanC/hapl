@@ -10,6 +10,7 @@ export function TypeFilter({ selected, onSelect }: TypeFilterProps) {
     { value: undefined, label: 'Tümü' },
     { value: 'dizi', label: 'Diziler' },
     { value: 'film', label: 'Filmler' },
+    { value: 'belgesel', label: 'Belgeseller' },
   ];
 
   return (

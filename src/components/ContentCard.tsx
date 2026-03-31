@@ -58,18 +58,20 @@ export function ContentCard({ content, index }: ContentCardProps) {
       <div className="p-2 space-y-1.5">
         {/* Platforms - most prominent */}
         <div className="flex flex-wrap gap-1">
-          {platformList.map((p) => (
-            <div
-              key={p.id}
-              className={cn(
-                'shrink-0 px-2.5 py-1 rounded-md text-[10px] font-extrabold tracking-wide uppercase',
-                platformColorMap[p.slug] || 'bg-primary',
-                'text-primary-foreground'
-              )}
-            >
-              {p.name}
-            </div>
-          ))}
+          {platformList.map((p) => {
+            const style = getPlatformStyle(p.slug);
+            return (
+              <div
+                key={p.id}
+                className={cn(
+                  'shrink-0 px-2.5 py-1 rounded-md text-[10px] font-extrabold tracking-wide uppercase',
+                  style.bg, style.text
+                )}
+              >
+                {p.name}
+              </div>
+            );
+          })}
         </div>
 
         <h3 className="font-heading font-bold text-xs text-foreground truncate leading-tight">{content.title}</h3>

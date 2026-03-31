@@ -86,6 +86,6 @@ export function ContentCard({ content, index }: ContentCardProps) {
           )}
         </div>
       </div>
-    </div>
+    </Link>
   );
 }

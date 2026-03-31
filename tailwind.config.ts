@@ -53,7 +53,7 @@ export default {
         },
         platform: {
           netflix: "hsl(var(--netflix))",
-          blutv: "hsl(var(--blutv))",
+          exxen: "hsl(var(--exxen))",
           exxen: "hsl(var(--exxen))",
           gain: "hsl(var(--gain))",
           disney: "hsl(var(--disney))",

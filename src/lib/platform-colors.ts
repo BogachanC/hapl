@@ -1,6 +1,5 @@
 export const platformColorMap: Record<string, string> = {
   netflix: 'bg-platform-netflix',
-  blutv: 'bg-platform-blutv',
   exxen: 'bg-platform-exxen',
   gain: 'bg-platform-gain',
   'disney-plus': 'bg-platform-disney',
@@ -10,7 +9,6 @@ export const platformColorMap: Record<string, string> = {
   mubi: 'bg-platform-mubi',
   'bein-connect': 'bg-platform-bein',
   'hbo-max': 'bg-platform-hbo',
-  'apple-tv-plus': 'bg-platform-appletv',
   puhutv: 'bg-platform-puhutv',
   'tv-plus': 'bg-platform-tvplus',
   'dsmart-go': 'bg-platform-dsmart',
@@ -18,7 +16,6 @@ export const platformColorMap: Record<string, string> = {
 
 export const platformTextColorMap: Record<string, string> = {
   netflix: 'text-platform-netflix',
-  blutv: 'text-platform-blutv',
   exxen: 'text-platform-exxen',
   gain: 'text-platform-gain',
   'disney-plus': 'text-platform-disney',
@@ -28,7 +25,6 @@ export const platformTextColorMap: Record<string, string> = {
   mubi: 'text-platform-mubi',
   'bein-connect': 'text-platform-bein',
   'hbo-max': 'text-platform-hbo',
-  'apple-tv-plus': 'text-platform-appletv',
   puhutv: 'text-platform-puhutv',
   'tv-plus': 'text-platform-tvplus',
   'dsmart-go': 'text-platform-dsmart',

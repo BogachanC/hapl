@@ -88,7 +88,8 @@ export function useContents(filters?: {
     },
     initialPageParam: 0,
     getNextPageParam: (lastPage, allPages) => {
-      return lastPage.length === PAGE_SIZE ? allPages.length : undefined;
+      if (!lastPage || lastPage.length < PAGE_SIZE) return undefined;
+      return allPages.length;
     },
   });
 }

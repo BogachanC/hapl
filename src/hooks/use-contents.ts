@@ -42,6 +42,8 @@ export function useContents(filters?: {
   platformId?: string;
   contentType?: string;
   status?: string;
+  origin?: string;
+  genres?: string[];
 }) {
   return useQuery({
     queryKey: ['contents', filters],

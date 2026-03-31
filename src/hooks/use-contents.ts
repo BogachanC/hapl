@@ -44,6 +44,8 @@ export function usePlatforms() {
   });
 }
 
+const PAGE_SIZE = 21;
+
 export function useContents(filters?: {
   search?: string;
   platformId?: string;
@@ -52,13 +54,14 @@ export function useContents(filters?: {
   origin?: string;
   genres?: string[];
 }) {
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: ['contents', filters],
-    queryFn: async () => {
+    queryFn: async ({ pageParam = 0 }) => {
       let query = supabase
         .from('contents')
         .select('*, platforms(*), content_platforms(platform_id, platforms(*))')
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .range(pageParam * PAGE_SIZE, (pageParam + 1) * PAGE_SIZE - 1);
 
       if (filters?.platformId) {
         query = query.eq('platform_id', filters.platformId);
@@ -82,6 +85,10 @@ export function useContents(filters?: {
       const { data, error } = await query;
       if (error) throw error;
       return data as Content[];
+    },
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, allPages) => {
+      return lastPage.length === PAGE_SIZE ? allPages.length : undefined;
     },
   });
 }

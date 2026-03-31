@@ -16,6 +16,7 @@ export type Content = {
   poster_url: string | null;
   content_type: 'dizi' | 'film';
   status: 'yayinda' | 'yakinda' | 'bitti';
+  origin: 'yerli' | 'yabanci';
   genre: string[];
   release_year: number | null;
   platform_id: string;

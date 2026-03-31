@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import haplLogo from '@/assets/hapl-logo.png';
 import { useContents, usePlatforms } from '@/hooks/use-contents';
 import { SearchBar } from '@/components/SearchBar';

@@ -45,26 +45,28 @@ export function ContentCard({ content, index }: ContentCardProps) {
         <div className="absolute inset-0 bg-gradient-to-t from-card via-transparent to-transparent" />
 
         {/* Status badge */}
-        <span className={cn('absolute top-2 right-2 px-2 py-0.5 rounded-full text-[10px] font-medium backdrop-blur-sm', statusColors[content.status])}>
+        <span className={cn('absolute top-2 right-2 z-10 px-2 py-0.5 rounded-full text-[10px] font-medium backdrop-blur-sm', statusColors[content.status])}>
           {statusLabels[content.status]}
         </span>
+      </div>
 
-        {/* Platform badges */}
-        <div className="absolute bottom-2 left-2 flex gap-1 flex-wrap">
+      <div className="p-3 space-y-2">
+        <h3 className="font-heading font-bold text-sm text-foreground truncate">{content.title}</h3>
+
+        <div className="flex flex-wrap gap-1.5">
           {platformList.map((p) => (
-            <div key={p.id} className={cn(
-              'px-2.5 py-1 rounded-lg text-[10px] font-bold tracking-wide shadow-lg backdrop-blur-sm',
-              platformColorMap[p.slug] || 'bg-primary',
-              'text-primary-foreground'
-            )}>
+            <div
+              key={p.id}
+              className={cn(
+                'shrink-0 px-2.5 py-1 rounded-lg text-[10px] font-bold tracking-wide shadow-lg',
+                platformColorMap[p.slug] || 'bg-primary',
+                'text-primary-foreground'
+              )}
+            >
               {p.name}
             </div>
           ))}
         </div>
-      </div>
-
-      <div className="p-3 space-y-1.5">
-        <h3 className="font-heading font-bold text-sm text-foreground truncate">{content.title}</h3>
 
         {content.description && (
           <p className="text-[11px] text-muted-foreground line-clamp-2 leading-relaxed">{content.description}</p>

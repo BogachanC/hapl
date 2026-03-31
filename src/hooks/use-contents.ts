@@ -19,7 +19,7 @@ export type Content = {
   title: string;
   description: string | null;
   poster_url: string | null;
-  content_type: 'dizi' | 'film';
+  content_type: 'dizi' | 'film' | 'belgesel';
   status: 'yayinda' | 'yakinda' | 'bitti';
   origin: 'yerli' | 'yabanci';
   genre: string[];

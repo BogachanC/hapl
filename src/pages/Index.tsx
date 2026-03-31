@@ -30,11 +30,12 @@ const Index = () => {
   const isLoading = platformsLoading || contentsLoading;
 
   const stats = useMemo(() => {
-    if (!contents) return { total: 0, dizi: 0, film: 0 };
+    if (!contents) return { total: 0, dizi: 0, film: 0, belgesel: 0 };
     return {
       total: contents.length,
       dizi: contents.filter((c) => c.content_type === 'dizi').length,
       film: contents.filter((c) => c.content_type === 'film').length,
+      belgesel: contents.filter((c) => c.content_type === 'belgesel').length,
     };
   }, [contents]);
 
@@ -81,6 +82,8 @@ const Index = () => {
           <span>{stats.dizi} dizi</span>
           <span>•</span>
           <span>{stats.film} film</span>
+          <span>•</span>
+          <span>{stats.belgesel} belgesel</span>
         </div>
 
         {/* Content Grid */}

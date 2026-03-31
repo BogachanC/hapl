@@ -49,13 +49,17 @@ export function ContentCard({ content, index }: ContentCardProps) {
           {statusLabels[content.status]}
         </span>
 
-        {/* Platform badge - prominent */}
-        <div className={cn(
-          'absolute bottom-2 left-2 px-3 py-1.5 rounded-lg text-[11px] font-bold tracking-wide shadow-lg backdrop-blur-sm',
-          platformColorMap[platform.slug] || 'bg-primary',
-          'text-primary-foreground'
-        )}>
-          {platform.name}
+        {/* Platform badges */}
+        <div className="absolute bottom-2 left-2 flex gap-1 flex-wrap">
+          {platformList.map((p) => (
+            <div key={p.id} className={cn(
+              'px-2.5 py-1 rounded-lg text-[10px] font-bold tracking-wide shadow-lg backdrop-blur-sm',
+              platformColorMap[p.slug] || 'bg-primary',
+              'text-primary-foreground'
+            )}>
+              {p.name}
+            </div>
+          ))}
         </div>
       </div>
 

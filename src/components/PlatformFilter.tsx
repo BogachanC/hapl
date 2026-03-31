@@ -10,7 +10,7 @@ interface PlatformFilterProps {
 
 export function PlatformFilter({ platforms, selected, onSelect }: PlatformFilterProps) {
   return (
-    <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
+    <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1 -mx-4 px-4 snap-x snap-mandatory" style={{ WebkitOverflowScrolling: 'touch' }}>
       <button
         onClick={() => onSelect(undefined)}
         className={cn(

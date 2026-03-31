@@ -55,6 +55,7 @@ export type Database = {
           content_type: Database["public"]["Enums"]["content_type"]
           created_at: string
           description: string | null
+          end_year: number | null
           genre: string[] | null
           id: string
           origin: Database["public"]["Enums"]["content_origin"]
@@ -69,6 +70,7 @@ export type Database = {
           content_type?: Database["public"]["Enums"]["content_type"]
           created_at?: string
           description?: string | null
+          end_year?: number | null
           genre?: string[] | null
           id?: string
           origin?: Database["public"]["Enums"]["content_origin"]
@@ -83,6 +85,7 @@ export type Database = {
           content_type?: Database["public"]["Enums"]["content_type"]
           created_at?: string
           description?: string | null
+          end_year?: number | null
           genre?: string[] | null
           id?: string
           origin?: Database["public"]["Enums"]["content_origin"]

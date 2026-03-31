@@ -65,6 +65,12 @@ export function useContents(filters?: {
       if (filters?.search) {
         query = query.ilike('title', `%${filters.search}%`);
       }
+      if (filters?.origin) {
+        query = query.eq('origin', filters.origin as any);
+      }
+      if (filters?.genres && filters.genres.length > 0) {
+        query = query.overlaps('genre', filters.genres);
+      }
 
       const { data, error } = await query;
       if (error) throw error;

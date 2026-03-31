@@ -45,7 +45,7 @@ const Index = () => {
       <header className="sticky top-0 z-50 bg-background/80 backdrop-blur-xl border-b border-border/50">
         <div className="container max-w-lg mx-auto px-4 py-4">
           <div className="flex items-center gap-3 mb-1">
-            <img src={haplLogo} alt="Hapl - Hangi Platform" className="h-20 w-auto object-contain" />
+            <img src={haplLogo} alt="Hapl - Hangi Platform" className="h-28 w-auto object-contain" />
             <div className="flex flex-col">
               <span className="text-xs font-medium text-muted-foreground tracking-wide">İçeriğin Adresi</span>
             </div>

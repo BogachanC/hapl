@@ -44,11 +44,12 @@ const ContentDetail = () => {
       {/* Hero Poster */}
       <div className="relative">
         <div className="aspect-[2/3] max-h-[60vh] w-full overflow-hidden bg-gradient-to-br from-secondary to-muted">
-          {content.poster_url ? (
+          {content.poster_url && !imgError ? (
             <img
               src={content.poster_url}
               alt={content.title}
               className="w-full h-full object-cover"
+              onError={() => setImgError(true)}
             />
           ) : content.content_type === 'dizi' ? (
             <div className="w-full h-full flex items-center justify-center">

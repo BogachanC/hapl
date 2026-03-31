@@ -13,33 +13,47 @@ export function ContentCard({ content, index }: ContentCardProps) {
 
   return (
     <div
-      className="bg-card rounded-lg overflow-hidden border border-border/50 hover:border-border transition-all animate-fade-in"
+      className="bg-card rounded-lg overflow-hidden border border-border/50 hover:border-border transition-all animate-fade-in group"
       style={{ animationDelay: `${index * 60}ms` }}
     >
-      {/* Poster placeholder with gradient */}
-      <div className="relative h-40 bg-gradient-to-br from-secondary to-muted flex items-center justify-center">
-        {content.content_type === 'dizi' ? (
+      {/* Poster */}
+      <div className="relative aspect-[2/3] bg-gradient-to-br from-secondary to-muted flex items-center justify-center overflow-hidden">
+        {content.poster_url ? (
+          <img
+            src={content.poster_url}
+            alt={content.title}
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+            loading="lazy"
+          />
+        ) : content.content_type === 'dizi' ? (
           <Tv className="h-10 w-10 text-muted-foreground/40" />
         ) : (
           <Film className="h-10 w-10 text-muted-foreground/40" />
         )}
-        
+
+        {/* Gradient overlay */}
+        <div className="absolute inset-0 bg-gradient-to-t from-card via-transparent to-transparent" />
+
         {/* Status badge */}
-        <span className={cn('absolute top-2 right-2 px-2 py-0.5 rounded-full text-[10px] font-medium', statusColors[content.status])}>
+        <span className={cn('absolute top-2 right-2 px-2 py-0.5 rounded-full text-[10px] font-medium backdrop-blur-sm', statusColors[content.status])}>
           {statusLabels[content.status]}
         </span>
 
-        {/* Platform badge */}
-        <span className={cn('absolute bottom-2 left-2 px-2.5 py-1 rounded-full text-[10px] font-semibold text-primary-foreground', platformColorMap[platform.slug] || 'bg-primary')}>
+        {/* Platform badge - prominent */}
+        <div className={cn(
+          'absolute bottom-2 left-2 px-3 py-1.5 rounded-lg text-[11px] font-bold tracking-wide shadow-lg backdrop-blur-sm',
+          platformColorMap[platform.slug] || 'bg-primary',
+          'text-primary-foreground'
+        )}>
           {platform.name}
-        </span>
+        </div>
       </div>
 
       <div className="p-3 space-y-1.5">
-        <h3 className="font-heading font-semibold text-sm text-foreground truncate">{content.title}</h3>
-        
+        <h3 className="font-heading font-bold text-sm text-foreground truncate">{content.title}</h3>
+
         {content.description && (
-          <p className="text-xs text-muted-foreground line-clamp-2">{content.description}</p>
+          <p className="text-[11px] text-muted-foreground line-clamp-2 leading-relaxed">{content.description}</p>
         )}
 
         <div className="flex items-center justify-between pt-1">

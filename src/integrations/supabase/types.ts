@@ -140,7 +140,7 @@ export type Database = {
     Enums: {
       content_origin: "yerli" | "yabanci"
       content_status: "yayinda" | "yakinda" | "bitti"
-      content_type: "dizi" | "film"
+      content_type: "dizi" | "film" | "belgesel"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -270,7 +270,7 @@ export const Constants = {
     Enums: {
       content_origin: ["yerli", "yabanci"],
       content_status: ["yayinda", "yakinda", "bitti"],
-      content_type: ["dizi", "film"],
+      content_type: ["dizi", "film", "belgesel"],
     },
   },
 } as const

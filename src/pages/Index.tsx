@@ -1,6 +1,6 @@
-import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { useState, useMemo, useRef, useCallback } from 'react';
 import haplLogo from '@/assets/hapl-logo.png';
-import { useContents, usePlatforms } from '@/hooks/use-contents';
+import { useContents, usePlatforms, PAGE_SIZE, MAX_ITEMS } from '@/hooks/use-contents';
 import { SearchBar } from '@/components/SearchBar';
 import { PlatformFilter } from '@/components/PlatformFilter';
 import { ContentCard } from '@/components/ContentCard';
@@ -16,32 +16,35 @@ const Index = () => {
   const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
   const [selectedOrigin, setSelectedOrigin] = useState<string | undefined>();
   const [selectedStatus, setSelectedStatus] = useState<string | undefined>();
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
   const { data: platforms, isLoading: platformsLoading } = usePlatforms();
-  const { data: contentsData, isLoading: contentsLoading, fetchNextPage, hasNextPage, isFetchingNextPage } = useContents({
+  const { data: allContents, isLoading: contentsLoading } = useContents({
     search: search || undefined,
     platformId: selectedPlatform,
     contentType: selectedType,
     origin: selectedOrigin,
     status: selectedStatus,
     genres: selectedGenres.length > 0 ? selectedGenres : undefined,
+    limit: MAX_ITEMS,
   });
 
-  const allContents = useMemo(() => contentsData?.pages.flat() ?? [], [contentsData]);
   const isLoading = platformsLoading || contentsLoading;
+  const visibleContents = useMemo(() => (allContents ?? []).slice(0, visibleCount), [allContents, visibleCount]);
+  const hasMore = allContents ? visibleCount < allContents.length : false;
 
   // Infinite scroll observer
   const observerRef = useRef<IntersectionObserver | null>(null);
   const loadMoreRef = useCallback((node: HTMLDivElement | null) => {
-    if (isFetchingNextPage) return;
     if (observerRef.current) observerRef.current.disconnect();
+    if (!node || !hasMore) return;
     observerRef.current = new IntersectionObserver((entries) => {
-      if (entries[0].isIntersecting && hasNextPage) {
-        fetchNextPage();
+      if (entries[0].isIntersecting) {
+        setVisibleCount((prev) => Math.min(prev + PAGE_SIZE, MAX_ITEMS));
       }
     });
-    if (node) observerRef.current.observe(node);
-  }, [isFetchingNextPage, hasNextPage, fetchNextPage]);
+    observerRef.current.observe(node);
+  }, [hasMore]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -63,16 +66,9 @@ const Index = () => {
       </header>
 
       <main className="container max-w-lg mx-auto px-4 py-4 space-y-4">
-        {/* Search */}
         <SearchBar value={search} onChange={setSearch} />
-
-        {/* Type Filter */}
         <TypeFilter selected={selectedType} onSelect={setSelectedType} />
-
-        {/* Platform Filter */}
         {platforms && <PlatformFilter platforms={platforms} selected={selectedPlatform} onSelect={setSelectedPlatform} />}
-
-        {/* Advanced Filters */}
         <AdvancedFilter
           selectedGenres={selectedGenres}
           onGenresChange={setSelectedGenres}
@@ -82,22 +78,22 @@ const Index = () => {
           onStatusChange={setSelectedStatus}
         />
 
-        {/* Content Grid */}
         {isLoading ? (
           <div className="flex items-center justify-center py-20">
             <Loader2 className="h-6 w-6 animate-spin text-primary" />
           </div>
-        ) : allContents.length > 0 ? (
+        ) : visibleContents.length > 0 ? (
           <>
             <div className="grid grid-cols-3 gap-2.5 pb-4">
-              {allContents.map((content, i) => (
+              {visibleContents.map((content, i) => (
                 <ContentCard key={content.id} content={content} index={i} />
               ))}
             </div>
-            {/* Infinite scroll trigger */}
-            <div ref={loadMoreRef} className="flex items-center justify-center py-4">
-              {isFetchingNextPage && <Loader2 className="h-5 w-5 animate-spin text-primary" />}
-            </div>
+            {hasMore && (
+              <div ref={loadMoreRef} className="flex items-center justify-center py-4">
+                <Loader2 className="h-5 w-5 animate-spin text-primary" />
+              </div>
+            )}
           </>
         ) : (
           <div className="text-center py-20 space-y-2">

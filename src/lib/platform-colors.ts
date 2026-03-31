@@ -9,6 +9,11 @@ export const platformColorMap: Record<string, string> = {
   tabii: 'bg-platform-tabii',
   mubi: 'bg-platform-mubi',
   'bein-connect': 'bg-platform-bein',
+  'hbo-max': 'bg-platform-hbo',
+  'apple-tv-plus': 'bg-platform-appletv',
+  puhutv: 'bg-platform-puhutv',
+  'tv-plus': 'bg-platform-tvplus',
+  'dsmart-go': 'bg-platform-dsmart',
 };
 
 export const platformTextColorMap: Record<string, string> = {

@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef, useCallback } from 'react';
+import { motion } from 'framer-motion';
 import haplLogo from '@/assets/hapl-logo.png';
 import { useContents, usePlatforms, PAGE_SIZE, MAX_ITEMS } from '@/hooks/use-contents';
 import { SearchBar } from '@/components/SearchBar';
@@ -48,18 +49,50 @@ const Index = () => {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="sticky top-0 z-50 bg-background/80 backdrop-blur-xl border-b border-border/50">
-        <div className="container max-w-lg mx-auto px-4 py-4">
-          <div className="flex items-center gap-3 mb-1">
-            <img src={haplLogo} alt="Hapl - Hangi Platform" className="h-28 w-auto object-contain" />
-            <div className="flex flex-col">
-              <span className="text-sm font-extrabold text-muted-foreground tracking-widest uppercase font-heading">İçeriğin Adresi</span>
-            </div>
+      {/* Premium Header */}
+      <header className="sticky top-0 z-50 border-b border-border/30 overflow-hidden">
+        {/* Gradient background */}
+        <div className="absolute inset-0 bg-gradient-to-r from-background via-card to-background" />
+        <div className="absolute inset-0 bg-gradient-to-b from-primary/8 via-transparent to-transparent" />
+        {/* Subtle glow */}
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-64 h-16 bg-primary/10 blur-3xl rounded-full" />
+        
+        <div className="container max-w-lg mx-auto px-4 py-3 relative">
+          <div className="flex items-center gap-3">
+            {/* Logo with glow effect */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.5, ease: 'easeOut' }}
+              className="relative"
+            >
+              <div className="absolute inset-0 bg-primary/20 blur-xl rounded-full scale-150" />
+              <img src={haplLogo} alt="Hapl - Hangi Platform" className="h-20 w-auto object-contain relative z-10 drop-shadow-[0_0_15px_hsl(var(--primary)/0.4)]" />
+            </motion.div>
+
+            {/* Slogan with animation */}
+            <motion.div
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.5, delay: 0.2 }}
+              className="flex flex-col gap-0.5"
+            >
+              <span className="text-[11px] font-extrabold tracking-[0.25em] uppercase font-heading bg-gradient-to-r from-primary via-accent to-primary bg-clip-text text-transparent">
+                İçeriğin Adresi
+              </span>
+              <span className="text-[9px] text-muted-foreground/60 font-medium tracking-wider">
+                Hangi platformda ne var?
+              </span>
+            </motion.div>
+
             <Link to="/admin" className="ml-auto">
-              <div className="h-8 w-8 rounded-lg bg-secondary hover:bg-secondary/80 flex items-center justify-center transition-colors">
-                <Plus className="h-4 w-4 text-secondary-foreground" />
-              </div>
+              <motion.div
+                whileHover={{ scale: 1.1 }}
+                whileTap={{ scale: 0.95 }}
+                className="h-9 w-9 rounded-xl bg-secondary/80 hover:bg-primary/20 border border-border/30 hover:border-primary/40 flex items-center justify-center transition-colors"
+              >
+                <Plus className="h-4 w-4 text-muted-foreground" />
+              </motion.div>
             </Link>
           </div>
         </div>

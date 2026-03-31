@@ -1,34 +1,28 @@
-export const platformColorMap: Record<string, string> = {
-  netflix: 'bg-platform-netflix',
-  exxen: 'bg-platform-exxen',
-  gain: 'bg-platform-gain',
-  'disney-plus': 'bg-platform-disney',
-  'prime-video': 'bg-platform-prime',
-  tod: 'bg-platform-tod',
-  tabii: 'bg-platform-tabii',
-  mubi: 'bg-platform-mubi',
-  'bein-connect': 'bg-platform-bein',
-  'hbo-max': 'bg-platform-hbo',
-  puhutv: 'bg-platform-puhutv',
-  'tv-plus': 'bg-platform-tvplus',
-  'dsmart-go': 'bg-platform-dsmart',
+// Each platform maps to { bg, text } tailwind classes
+export interface PlatformStyle {
+  bg: string;
+  text: string;
+}
+
+export const platformStyles: Record<string, PlatformStyle> = {
+  netflix: { bg: 'bg-platform-netflix', text: 'text-white' },
+  exxen: { bg: 'bg-platform-exxen', text: 'text-black' },
+  gain: { bg: 'bg-platform-gain', text: 'text-black' },
+  'disney-plus': { bg: 'bg-platform-disney', text: 'text-white' },
+  'prime-video': { bg: 'bg-platform-prime', text: 'text-white' },
+  tod: { bg: 'bg-platform-tod', text: 'text-yellow-400' },
+  tabii: { bg: 'bg-platform-tabii', text: 'text-green-400' },
+  mubi: { bg: 'bg-platform-mubi', text: 'text-white' },
+  'bein-connect': { bg: 'bg-platform-bein', text: 'text-white' },
+  'hbo-max': { bg: 'bg-platform-hbo', text: 'text-black' },
+  puhutv: { bg: 'bg-platform-puhutv', text: 'text-black' },
+  'tv-plus': { bg: 'bg-platform-tvplus', text: 'text-white' },
+  'dsmart-go': { bg: 'bg-platform-dsmart', text: 'text-white' },
 };
 
-export const platformTextColorMap: Record<string, string> = {
-  netflix: 'text-platform-netflix',
-  exxen: 'text-platform-exxen',
-  gain: 'text-platform-gain',
-  'disney-plus': 'text-platform-disney',
-  'prime-video': 'text-platform-prime',
-  tod: 'text-platform-tod',
-  tabii: 'text-platform-tabii',
-  mubi: 'text-platform-mubi',
-  'bein-connect': 'text-platform-bein',
-  'hbo-max': 'text-platform-hbo',
-  puhutv: 'text-platform-puhutv',
-  'tv-plus': 'text-platform-tvplus',
-  'dsmart-go': 'text-platform-dsmart',
-};
+export function getPlatformStyle(slug: string): PlatformStyle {
+  return platformStyles[slug] || { bg: 'bg-primary', text: 'text-primary-foreground' };
+}
 
 export const statusLabels: Record<string, string> = {
   yayinda: 'Yayında',

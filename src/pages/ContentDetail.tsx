@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useContent, Platform } from '@/hooks/use-contents';
-import { platformColorMap, platformTextColorMap, statusLabels, statusColors } from '@/lib/platform-colors';
+import { getPlatformStyle, statusLabels, statusColors } from '@/lib/platform-colors';
 import { ArrowLeft, Calendar, Film, Tv, Globe, Flag, Loader2, Clapperboard } from 'lucide-react';
 import { cn } from '@/lib/utils';
 

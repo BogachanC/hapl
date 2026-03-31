@@ -16,6 +16,7 @@ export type Content = {
   poster_url: string | null;
   content_type: 'dizi' | 'film';
   status: 'yayinda' | 'yakinda' | 'bitti';
+  origin: 'yerli' | 'yabanci';
   genre: string[];
   release_year: number | null;
   platform_id: string;
@@ -41,6 +42,8 @@ export function useContents(filters?: {
   platformId?: string;
   contentType?: string;
   status?: string;
+  origin?: string;
+  genres?: string[];
 }) {
   return useQuery({
     queryKey: ['contents', filters],
@@ -61,6 +64,12 @@ export function useContents(filters?: {
       }
       if (filters?.search) {
         query = query.ilike('title', `%${filters.search}%`);
+      }
+      if (filters?.origin) {
+        query = query.eq('origin', filters.origin as any);
+      }
+      if (filters?.genres && filters.genres.length > 0) {
+        query = query.overlaps('genre', filters.genres);
       }
 
       const { data, error } = await query;

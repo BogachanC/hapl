@@ -17,6 +17,7 @@ function getAllPlatforms(content: { platforms: Platform; content_platforms?: { p
 const ContentDetail = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [imgError, setImgError] = useState(false);
   const { data: content, isLoading } = useContent(id || '');
 
   if (isLoading) {

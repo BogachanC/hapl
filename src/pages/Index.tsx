@@ -85,7 +85,7 @@ const Index = () => {
             <Loader2 className="h-6 w-6 animate-spin text-primary" />
           </div>
         ) : contents && contents.length > 0 ? (
-          <div className="grid grid-cols-2 gap-3 pb-8">
+          <div className="grid grid-cols-3 gap-2.5 pb-8">
             {contents.map((content, i) => (
               <ContentCard key={content.id} content={content} index={i} />
             ))}

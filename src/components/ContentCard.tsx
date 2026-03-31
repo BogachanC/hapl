@@ -14,7 +14,6 @@ export function ContentCard({ content, index }: ContentCardProps) {
   const [imgError, setImgError] = useState(false);
   const platform = content.platforms;
 
-  // Gather all platforms from junction table
   const allPlatforms = new Map<string, typeof platform>();
   allPlatforms.set(platform.id, platform);
   content.content_platforms?.forEach((cp) => {
@@ -22,11 +21,19 @@ export function ContentCard({ content, index }: ContentCardProps) {
   });
   const platformList = Array.from(allPlatforms.values());
 
+  const yearDisplay = content.release_year
+    ? content.end_year
+      ? `${content.release_year}–${content.end_year}`
+      : content.status === 'bitti'
+        ? `${content.release_year}`
+        : `${content.release_year}–`
+    : null;
+
   return (
     <Link
       to={`/content/${content.id}`}
-      className="bg-card rounded-lg overflow-hidden border border-border/50 hover:border-border transition-all animate-fade-in group block"
-      style={{ animationDelay: `${index * 60}ms` }}
+      className="bg-card rounded-xl overflow-hidden border border-border/30 hover:border-primary/40 hover:shadow-[0_8px_30px_-8px_hsl(var(--primary)/0.25)] transition-all duration-300 animate-fade-in group block"
+      style={{ animationDelay: `${index * 40}ms` }}
     >
       {/* Poster */}
       <div className="relative aspect-[2/3] bg-gradient-to-br from-secondary to-muted flex items-center justify-center overflow-hidden">
@@ -34,36 +41,42 @@ export function ContentCard({ content, index }: ContentCardProps) {
           <img
             src={content.poster_url}
             alt={content.title}
-            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+            className="w-full h-full object-cover group-hover:scale-[1.08] transition-transform duration-700 ease-out"
             loading="lazy"
             onError={() => setImgError(true)}
           />
         ) : content.content_type === 'dizi' ? (
-          <Tv className="h-10 w-10 text-muted-foreground/40" />
+          <Tv className="h-8 w-8 text-muted-foreground/30" />
         ) : (
-          <Film className="h-10 w-10 text-muted-foreground/40" />
+          <Film className="h-8 w-8 text-muted-foreground/30" />
         )}
 
         {/* Gradient overlay */}
-        <div className="absolute inset-0 bg-gradient-to-t from-card via-transparent to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-t from-card/90 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
       </div>
 
-      {/* Status badge - below poster */}
-      <div className="px-3 pt-2">
-        <span className={cn('inline-block px-2 py-0.5 rounded-full text-[10px] font-medium', statusColors[content.status])}>
-          {statusLabels[content.status]}
-        </span>
-      </div>
+      <div className="p-2.5 space-y-1.5">
+        {/* Status + Year row */}
+        <div className="flex items-center justify-between gap-1">
+          <span className={cn('px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider', statusColors[content.status])}>
+            {statusLabels[content.status]}
+          </span>
+          {yearDisplay && (
+            <span className="text-[9px] text-muted-foreground flex items-center gap-0.5 font-medium">
+              <Calendar className="h-2.5 w-2.5" />
+              {yearDisplay}
+            </span>
+          )}
+        </div>
 
-      <div className="p-3 space-y-2">
-        <h3 className="font-heading font-bold text-sm text-foreground truncate">{content.title}</h3>
+        <h3 className="font-heading font-bold text-xs text-foreground truncate leading-tight">{content.title}</h3>
 
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex flex-wrap gap-1">
           {platformList.map((p) => (
             <div
               key={p.id}
               className={cn(
-                'shrink-0 px-2.5 py-1 rounded-lg text-[10px] font-bold tracking-wide shadow-lg',
+                'shrink-0 px-2 py-0.5 rounded-md text-[8px] font-bold tracking-wide',
                 platformColorMap[p.slug] || 'bg-primary',
                 'text-primary-foreground'
               )}
@@ -73,25 +86,15 @@ export function ContentCard({ content, index }: ContentCardProps) {
           ))}
         </div>
 
-        {content.description && (
-          <p className="text-[11px] text-muted-foreground line-clamp-2 leading-relaxed">{content.description}</p>
-        )}
-
-        <div className="flex items-center justify-between pt-1">
+        {content.genre && content.genre.length > 0 && (
           <div className="flex gap-1 flex-wrap">
             {content.genre.slice(0, 2).map((g) => (
-              <span key={g} className="text-[10px] px-2 py-0.5 bg-secondary rounded-full text-secondary-foreground">
+              <span key={g} className="text-[8px] px-1.5 py-0.5 bg-secondary/80 rounded text-secondary-foreground">
                 {g}
               </span>
             ))}
           </div>
-          {content.release_year && (
-            <span className="text-[10px] text-muted-foreground flex items-center gap-1">
-              <Calendar className="h-3 w-3" />
-              {content.release_year}
-            </span>
-          )}
-        </div>
+        )}
       </div>
     </Link>
   );

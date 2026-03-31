@@ -24,6 +24,7 @@ export type Content = {
   origin: 'yerli' | 'yabanci';
   genre: string[];
   release_year: number | null;
+  end_year: number | null;
   platform_id: string;
   platforms: Platform;
   content_platforms?: ContentPlatform[];

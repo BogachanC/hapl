@@ -78,16 +78,6 @@ const Index = () => {
           onStatusChange={setSelectedStatus}
         />
 
-        {/* Stats */}
-        <div className="flex gap-3 text-xs text-muted-foreground">
-          <span>{stats.total} içerik</span>
-          <span>•</span>
-          <span>{stats.dizi} dizi</span>
-          <span>•</span>
-          <span>{stats.film} film</span>
-          <span>•</span>
-          <span>{stats.belgesel} belgesel</span>
-        </div>
 
         {/* Content Grid */}
         {isLoading ? (

@@ -214,14 +214,14 @@ serve(async (req) => {
             if (slug) tmdbSlugs.push(slug);
           }
 
-          // ─── Source: JustWatch (sadece TMDB boşsa) ──────────────────
+          // ─── Source: JustWatch (sadece TMDB boşsa, max limit) ────────
           const jwSlugs: string[] = [];
           if (tmdbSlugs.length === 0 && fallbackUsed < MAX_FALLBACK) {
             fallbackUsed++;
             try {
               const jwRes = await fetch("https://apis.justwatch.com/content/titles/tr_TR/popular", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: { "Content-Type": "application/json", "Accept": "application/json" },
                 body: JSON.stringify({
                   query: title,
                   page_size: 1,
@@ -229,19 +229,24 @@ serve(async (req) => {
                   content_types: mediaType === "movie" ? ["movie"] : ["show"],
                 }),
               });
-              const jwData = await jwRes.json();
-              if (jwData.items && jwData.items.length > 0) {
-                const offers = jwData.items[0].offers || [];
-                const seen = new Set<string>();
-                for (const o of offers) {
-                  if (o.monetization_type === "flatrate") {
-                    const slug = JW_PROVIDER_SLUG[o.provider_id];
-                    if (slug && !seen.has(slug)) {
-                      seen.add(slug);
-                      jwSlugs.push(slug);
+              if (jwRes.ok) {
+                const text = await jwRes.text();
+                try {
+                  const jwData = JSON.parse(text);
+                  if (jwData.items && jwData.items.length > 0) {
+                    const offers = jwData.items[0].offers || [];
+                    const seen = new Set<string>();
+                    for (const o of offers) {
+                      if (o.monetization_type === "flatrate") {
+                        const slug = JW_PROVIDER_SLUG[o.provider_id];
+                        if (slug && !seen.has(slug)) {
+                          seen.add(slug);
+                          jwSlugs.push(slug);
+                        }
+                      }
                     }
                   }
-                }
+                } catch { /* non-JSON response, skip */ }
               }
             } catch (err) {
               console.error(`JustWatch hatası (${title}):`, err);

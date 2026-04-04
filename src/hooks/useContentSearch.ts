@@ -24,6 +24,7 @@ export interface ContentResult {
   platforms: Platform[];
   tmdb_url: string;
   available_in_tr: boolean;
+  confidence: number;
 }
 
 interface SearchState {

@@ -12,8 +12,7 @@ import { Tv, Loader2, Plus, ArrowLeft } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 const Index = () => {
-  const [search, setSearch] = useState('');
-  const { results: searchResults, loading: searchLoading, hasSearched, search: doSearch, clear: clearSearch } = useContentSearch();
+  const { results: searchResults, loading: searchLoading, hasSearched, query: search, setQuery: setSearch, clear: clearSearch } = useContentSearch();
   const [selectedPlatform, setSelectedPlatform] = useState<string | undefined>();
   const [selectedType, setSelectedType] = useState<string | undefined>();
   const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
@@ -23,7 +22,6 @@ const Index = () => {
 
   const { data: platforms, isLoading: platformsLoading } = usePlatforms();
   const { data: allContents, isLoading: contentsLoading } = useContents({
-    search: search || undefined,
     platformId: selectedPlatform,
     contentType: selectedType,
     origin: selectedOrigin,

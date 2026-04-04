@@ -174,6 +174,8 @@ serve(async (req) => {
 
     let totalInserted = 0;
     let totalSkipped = 0;
+    let fallbackUsed = 0;
+    const MAX_FALLBACK = 10; // JustWatch/Firecrawl çağrı limiti (timeout önlemi)
     const seenTitles = new Set<string>();
 
     for (const [category, config] of Object.entries(SEED_QUERIES)) {

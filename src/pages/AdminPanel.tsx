@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { usePlatforms } from '@/hooks/use-contents';
-import { Search, Plus, ArrowLeft, Loader2, Film, Tv, Check } from 'lucide-react';
+import { Search, Plus, ArrowLeft, Loader2, Film, Tv, Check, Database, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Link } from 'react-router-dom';

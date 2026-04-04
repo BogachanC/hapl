@@ -29,7 +29,7 @@ const JW_PROVIDER_SLUG: Record<number, string> = {
 // ─── TMDB provider ID → platform slug (fallback) ───────────────────────────
 const TMDB_PROVIDER_SLUG: Record<number, string> = {
   8: "netflix", 337: "disney-plus", 119: "prime-video", 9: "prime-video",
-  341: "blutv", 1899: "blutv",
+  341: "hbo-max", 1899: "hbo-max",
   1796: "exxen", 356: "exxen",
   567: "gain", 456: "gain",
   618: "mubi", 11: "mubi",

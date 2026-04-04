@@ -90,7 +90,6 @@ const Index = () => {
             setSearch(v);
             if (!v) clearSearch();
           }}
-          onSearch={doSearch}
           loading={searchLoading}
         />
         {hasSearched ? (

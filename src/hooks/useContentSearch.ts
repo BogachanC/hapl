@@ -33,7 +33,7 @@ interface SearchState {
   hasSearched: boolean;
 }
 
-const DEBOUNCE_MS = 500;
+const DEBOUNCE_MS = 300;
 
 export function useContentSearch() {
   const [state, setState] = useState<SearchState>({

@@ -203,7 +203,7 @@ Deno.serve(async (req) => {
               limit: 5,
               lang: "tr",
               country: "tr",
-              scrapeOptions: { formats: ["markdown"] },
+              // No scrapeOptions = faster, just get titles from snippets
             }),
           });
           

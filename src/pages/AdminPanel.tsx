@@ -29,6 +29,8 @@ const AdminPanel = () => {
   const [origin, setOrigin] = useState<'yerli' | 'yabanci'>('yerli');
   const [status, setStatus] = useState<'yayinda' | 'yakinda' | 'bitti'>('yayinda');
   const [loadingDetail, setLoadingDetail] = useState(false);
+  const [seeding, setSeeding] = useState(false);
+  const [seedResult, setSeedResult] = useState<string | null>(null);
 
   const { data: platforms } = usePlatforms();
 

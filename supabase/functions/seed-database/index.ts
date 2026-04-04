@@ -14,37 +14,53 @@ const TMDB_PROVIDER_SLUG: Record<number, string> = {
   8: "netflix",
   337: "disney-plus",
   119: "prime-video",
+  9: "prime-video",
   341: "blutv",
   1899: "blutv",
-  567: "gain",
-  618: "mubi",
-  350: "tv-plus",
   384: "hbo-max",
   1796: "exxen",
+  356: "exxen",
+  567: "gain",
+  618: "mubi",
+  11: "mubi",
+  350: "tv-plus",
+  1871: "tv-plus",
   542: "bein-connect",
   1870: "puhutv",
+  123: "puhutv",
   2077: "tabii",
+  111: "tabii",
   1898: "tod",
-  1871: "tv-plus",
   188: "youtube-premium",
+  987: "dsmart-go",
 };
 
 // ─── JustWatch provider ID → platform slug ──────────────────────────────────
 const JW_PROVIDER_SLUG: Record<number, string> = {
   8: "netflix",
   9: "prime-video",
+  119: "prime-video",
   337: "disney-plus",
   384: "blutv",
+  341: "blutv",
   356: "exxen",
-  119: "tv-plus",
+  1796: "exxen",
+  350: "tv-plus",
+  1871: "tv-plus",
   11: "mubi",
+  618: "mubi",
   123: "puhutv",
+  1870: "puhutv",
+  567: "gain",
   456: "gain",
   789: "bein-connect",
+  542: "bein-connect",
   321: "hbo-max",
   654: "tod",
+  1898: "tod",
   987: "dsmart-go",
   111: "tabii",
+  2077: "tabii",
 };
 
 // ─── Platform keyword → slug (Firecrawl fallback) ───────────────────────────
@@ -82,7 +98,7 @@ function extractPlatformSlugs(text: string): string[] {
   return Array.from(found);
 }
 
-// ─── AI Validation ──────────────────────────────────────────────────────────
+// ─── Weighted validation ────────────────────────────────────────────────────
 const SOURCE_WEIGHTS: Record<string, number> = {
   tmdb: 0.5,
   justwatch: 0.8,
@@ -104,46 +120,6 @@ function validateSlugs(sources: Record<string, string[]>): string[] {
     .map(([slug]) => slug);
 }
 
-// ─── Seed categories ────────────────────────────────────────────────────────
-const SEED_QUERIES = {
-  turkish_tv: {
-    url: "/discover/tv?with_origin_country=TR&sort_by=popularity.desc&language=tr-TR&page=",
-    type: "dizi" as const,
-    origin: "yerli" as const,
-    pages: 1,
-  },
-  turkish_movies: {
-    url: "/discover/movie?region=TR&with_origin_country=TR&sort_by=popularity.desc&language=tr-TR&page=",
-    type: "film" as const,
-    origin: "yerli" as const,
-    pages: 1,
-  },
-  international_tv: {
-    url: "/discover/tv?sort_by=popularity.desc&language=tr-TR&watch_region=TR&with_watch_monetization_types=flatrate&page=",
-    type: "dizi" as const,
-    origin: "yabanci" as const,
-    pages: 1,
-  },
-  international_movies: {
-    url: "/discover/movie?sort_by=popularity.desc&language=tr-TR&watch_region=TR&with_watch_monetization_types=flatrate&page=",
-    type: "film" as const,
-    origin: "yabanci" as const,
-    pages: 1,
-  },
-  documentaries: {
-    url: "/discover/movie?with_genres=99&sort_by=popularity.desc&language=tr-TR&watch_region=TR&with_watch_monetization_types=flatrate&page=",
-    type: "belgesel" as const,
-    origin: "yabanci" as const,
-    pages: 1,
-  },
-  turkish_docs: {
-    url: "/discover/movie?with_genres=99&with_origin_country=TR&sort_by=popularity.desc&language=tr-TR&page=",
-    type: "belgesel" as const,
-    origin: "yerli" as const,
-    pages: 1,
-  },
-};
-
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -163,61 +139,74 @@ serve(async (req) => {
 
   const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
+  // Parse params: startPage, endPage, mediaType, clearFirst
+  let params: any = {};
+  try { params = await req.json(); } catch { /* defaults */ }
+
+  const startPage = params.startPage || 1;
+  const endPage = params.endPage || 3;
+  const mediaType = params.mediaType || "both"; // "movie", "tv", "both"
+  const clearFirst = params.clearFirst === true;
+  const maxFirecrawl = params.maxFirecrawl || 5;
+
   try {
-    // 1. Load existing platforms
+    // Load existing platforms
     const { data: platforms } = await sb.from("platforms").select("id, slug, name");
     const platformBySlug = new Map(platforms?.map((p) => [p.slug, p]) || []);
 
-    // 2. Clear existing data
-    await sb.from("content_platforms").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-    await sb.from("contents").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+    // Optionally clear
+    if (clearFirst) {
+      await sb.from("content_platforms").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+      await sb.from("contents").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+    }
+
+    // Load existing titles to skip duplicates
+    const { data: existing } = await sb.from("contents").select("title");
+    const existingTitles = new Set(existing?.map(e => e.title) || []);
 
     let totalInserted = 0;
     let totalSkipped = 0;
-    let fallbackUsed = 0;
-    const MAX_FALLBACK = 10; // JustWatch/Firecrawl çağrı limiti (timeout önlemi)
-    const seenTitles = new Set<string>();
+    let fcUsed = 0;
 
-    for (const [category, config] of Object.entries(SEED_QUERIES)) {
-      console.log(`[seed] Kategori: ${category}`);
+    const types = mediaType === "both" ? ["movie", "tv"] : [mediaType];
 
-      for (let page = 1; page <= config.pages; page++) {
+    for (const type of types) {
+      for (let page = startPage; page <= endPage; page++) {
+        console.log(`[seed] ${type} page ${page}`);
+
         const discoverRes = await fetch(
-          `${TMDB_BASE}${config.url}${page}&api_key=${TMDB_API_KEY}`
+          `${TMDB_BASE}/${type}/popular?api_key=${TMDB_API_KEY}&language=tr-TR&page=${page}`
         );
         const discoverData = await discoverRes.json();
         const items = discoverData.results || [];
 
         for (const item of items) {
           const title = item.title || item.name;
-          if (!title || seenTitles.has(title)) {
+          if (!title || existingTitles.has(title)) {
             totalSkipped++;
             continue;
           }
 
-          const mediaType = config.type === "film" || config.type === "belgesel" ? "movie" : "tv";
           const id = item.id;
 
-          // ─── Source: TMDB providers ───────────────────────────────────
-          let providerData: any = {};
+          // ─── Source 1: TMDB providers ─────────────────────────────────
+          let tmdbSlugs: string[] = [];
           try {
             const providerRes = await fetch(
-              `${TMDB_BASE}/${mediaType}/${id}/watch/providers?api_key=${TMDB_API_KEY}`
+              `${TMDB_BASE}/${type}/${id}/watch/providers?api_key=${TMDB_API_KEY}`
             );
-            providerData = await providerRes.json();
+            const providerData = await providerRes.json();
+            const trProviders = providerData.results?.TR || {};
+            for (const p of [...(trProviders.flatrate || []), ...(trProviders.free || [])]) {
+              const slug = TMDB_PROVIDER_SLUG[p.provider_id];
+              if (slug) tmdbSlugs.push(slug);
+            }
+            tmdbSlugs = [...new Set(tmdbSlugs)];
           } catch { /* continue */ }
 
-          const trProviders = providerData.results?.TR || {};
-          const tmdbSlugs: string[] = [];
-          for (const p of [...(trProviders.flatrate || []), ...(trProviders.free || [])]) {
-            const slug = TMDB_PROVIDER_SLUG[p.provider_id];
-            if (slug) tmdbSlugs.push(slug);
-          }
-
-          // ─── Source: JustWatch (sadece TMDB boşsa, max limit) ────────
-          const jwSlugs: string[] = [];
-          if (tmdbSlugs.length === 0 && fallbackUsed < MAX_FALLBACK) {
-            fallbackUsed++;
+          // ─── Source 2: JustWatch (if TMDB empty) ──────────────────────
+          let jwSlugs: string[] = [];
+          if (tmdbSlugs.length === 0) {
             try {
               const jwRes = await fetch("https://apis.justwatch.com/content/titles/tr_TR/popular", {
                 method: "POST",
@@ -226,14 +215,14 @@ serve(async (req) => {
                   query: title,
                   page_size: 1,
                   page: 1,
-                  content_types: mediaType === "movie" ? ["movie"] : ["show"],
+                  content_types: type === "movie" ? ["movie"] : ["show"],
                 }),
               });
               if (jwRes.ok) {
                 const text = await jwRes.text();
                 try {
                   const jwData = JSON.parse(text);
-                  if (jwData.items && jwData.items.length > 0) {
+                  if (jwData.items?.length) {
                     const offers = jwData.items[0].offers || [];
                     const seen = new Set<string>();
                     for (const o of offers) {
@@ -246,16 +235,15 @@ serve(async (req) => {
                       }
                     }
                   }
-                } catch { /* non-JSON response, skip */ }
+                } catch { /* non-JSON */ }
               }
-            } catch (err) {
-              console.error(`JustWatch hatası (${title}):`, err);
-            }
+            } catch { /* continue */ }
           }
 
-          // ─── Source: Firecrawl (TMDB + JW ikisi de boşsa) ─────────────
-          const fcSlugs: string[] = [];
-          if (tmdbSlugs.length === 0 && jwSlugs.length === 0 && FIRECRAWL_API_KEY && fallbackUsed <= MAX_FALLBACK) {
+          // ─── Source 3: Firecrawl (if both empty, limited) ─────────────
+          let fcSlugs: string[] = [];
+          if (tmdbSlugs.length === 0 && jwSlugs.length === 0 && FIRECRAWL_API_KEY && fcUsed < maxFirecrawl) {
+            fcUsed++;
             try {
               const fcRes = await fetch("https://api.firecrawl.dev/v1/search", {
                 method: "POST",
@@ -273,19 +261,17 @@ serve(async (req) => {
                 const text = result.markdown || result.description || "";
                 fcSlugs.push(...extractPlatformSlugs(text));
               }
-            } catch (err) {
-              console.error(`Firecrawl hatası (${title}):`, err);
-            }
+              fcSlugs = [...new Set(fcSlugs)];
+            } catch { /* continue */ }
           }
 
-          // ─── AI Validation ────────────────────────────────────────────
+          // ─── Validate ─────────────────────────────────────────────────
           const validatedSlugs = validateSlugs({
-            tmdb: [...new Set(tmdbSlugs)],
+            tmdb: tmdbSlugs,
             justwatch: jwSlugs,
-            firecrawl: [...new Set(fcSlugs)],
+            firecrawl: fcSlugs,
           });
 
-          // Resolve to DB platform IDs
           const matchedPlatforms = validatedSlugs
             .map((slug) => platformBySlug.get(slug))
             .filter(Boolean) as { id: string; slug: string; name: string }[];
@@ -295,18 +281,17 @@ serve(async (req) => {
             continue;
           }
 
-          seenTitles.add(title);
-
           // ─── Get details ──────────────────────────────────────────────
           let genres: string[] = [];
           let overview = item.overview || null;
           let releaseYear: number | null = null;
           let endYear: number | null = null;
-          let detectedOrigin = config.origin;
+          let detectedOrigin: "yerli" | "yabanci" = "yabanci";
+          let contentType: "dizi" | "film" | "belgesel" = type === "tv" ? "dizi" : "film";
 
           try {
             const detailRes = await fetch(
-              `${TMDB_BASE}/${mediaType}/${id}?api_key=${TMDB_API_KEY}&language=tr-TR`
+              `${TMDB_BASE}/${type}/${id}?api_key=${TMDB_API_KEY}&language=tr-TR`
             );
             const detail = await detailRes.json();
             genres = (detail.genres || []).map((g: any) => g.name);
@@ -315,12 +300,16 @@ serve(async (req) => {
             const releaseDate = detail.release_date || detail.first_air_date;
             if (releaseDate) releaseYear = new Date(releaseDate).getFullYear();
 
-            if (mediaType === "tv" && detail.status === "Ended" && detail.last_air_date) {
+            if (type === "tv" && detail.status === "Ended" && detail.last_air_date) {
               endYear = new Date(detail.last_air_date).getFullYear();
             }
 
             const originCountries = detail.origin_country || detail.production_countries?.map((c: any) => c.iso_3166_1) || [];
             if (originCountries.includes("TR")) detectedOrigin = "yerli";
+
+            // Check if documentary
+            const genreIds = (detail.genres || []).map((g: any) => g.id);
+            if (genreIds.includes(99)) contentType = "belgesel";
           } catch { /* use basic info */ }
 
           const posterUrl = item.poster_path
@@ -328,18 +317,19 @@ serve(async (req) => {
             : null;
 
           let status: "yayinda" | "yakinda" | "bitti" = "yayinda";
-          if (mediaType === "tv" && endYear) status = "bitti";
+          if (type === "tv" && endYear) status = "bitti";
 
           const primaryPlatform = matchedPlatforms[0];
+          existingTitles.add(title);
 
-          // ─── Insert content ───────────────────────────────────────────
+          // ─── Insert ───────────────────────────────────────────────────
           const { data: inserted, error: insertError } = await sb
             .from("contents")
             .insert({
               title,
               description: overview,
               poster_url: posterUrl,
-              content_type: config.type,
+              content_type: contentType,
               status,
               origin: detectedOrigin,
               genre: genres,
@@ -351,12 +341,12 @@ serve(async (req) => {
             .single();
 
           if (insertError) {
-            console.error(`Insert error for "${title}":`, insertError.message);
+            console.error(`Insert error "${title}":`, insertError.message);
             totalSkipped++;
             continue;
           }
 
-          // Add additional platforms to junction table
+          // Junction table for additional platforms
           if (matchedPlatforms.length > 1) {
             const junctionRows = matchedPlatforms.slice(1).map((p) => ({
               content_id: inserted.id,
@@ -368,8 +358,8 @@ serve(async (req) => {
           totalInserted++;
         }
 
-        // Rate limit delay
-        await new Promise((r) => setTimeout(r, 100));
+        // Rate limit
+        await new Promise((r) => setTimeout(r, 80));
       }
     }
 
@@ -378,6 +368,8 @@ serve(async (req) => {
         success: true,
         inserted: totalInserted,
         skipped: totalSkipped,
+        pages: `${startPage}-${endPage}`,
+        types,
         message: `${totalInserted} içerik eklendi, ${totalSkipped} atlandı.`,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }

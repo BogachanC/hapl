@@ -250,7 +250,7 @@ serve(async (req) => {
 
           // ─── Source: Firecrawl (TMDB + JW ikisi de boşsa) ─────────────
           const fcSlugs: string[] = [];
-          if (tmdbSlugs.length === 0 && jwSlugs.length === 0 && FIRECRAWL_API_KEY) {
+          if (tmdbSlugs.length === 0 && jwSlugs.length === 0 && FIRECRAWL_API_KEY && fallbackUsed <= MAX_FALLBACK) {
             try {
               const fcRes = await fetch("https://api.firecrawl.dev/v1/search", {
                 method: "POST",

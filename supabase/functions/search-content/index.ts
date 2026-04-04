@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -7,6 +8,7 @@ const corsHeaders = {
 };
 
 const TMDB_BASE = "https://api.themoviedb.org/3";
+const CACHE_TTL_SECONDS = 24 * 60 * 60; // 24 hours
 
 // ─── JustWatch provider ID → platform name ──────────────────────────────────
 const JW_PROVIDER_MAP: Record<number, string> = {
@@ -86,7 +88,7 @@ function extractPlatforms(text: string): string[] {
   return [...new Set(platforms)];
 }
 
-// ─── AI Validation: Score-based platform filtering ──────────────────────────
+// ─── AI Validation ──────────────────────────────────────────────────────────
 const SOURCE_WEIGHTS: Record<string, number> = {
   tmdb: 0.5,
   justwatch: 0.8,
@@ -108,7 +110,6 @@ function validatePlatforms(sources: Record<string, string[]>): string[] {
     .map(([platform]) => platform);
 }
 
-// ─── Confidence Score ───────────────────────────────────────────────────────
 function getConfidenceScore(sources: Record<string, string[]>): number {
   const total =
     sources.justwatch.length * 0.8 +
@@ -117,6 +118,31 @@ function getConfidenceScore(sources: Record<string, string[]>): number {
   return Math.min(100, Math.round(total * 100));
 }
 
+// ─── Cache helpers ──────────────────────────────────────────────────────────
+function getCacheKey(query: string): string {
+  return `hapl:${query.toLowerCase().trim()}`;
+}
+
+async function getFromCache(sb: any, key: string): Promise<any | null> {
+  const cutoff = new Date(Date.now() - CACHE_TTL_SECONDS * 1000).toISOString();
+  const { data } = await sb
+    .from("search_cache")
+    .select("results")
+    .eq("cache_key", key)
+    .gt("created_at", cutoff)
+    .maybeSingle();
+  return data?.results || null;
+}
+
+async function writeToCache(sb: any, key: string, results: any): Promise<void> {
+  // Upsert: aynı key varsa güncelle
+  await sb.from("search_cache").upsert(
+    { cache_key: key, results, created_at: new Date().toISOString() },
+    { onConflict: "cache_key" }
+  );
+}
+
+// ─── Main handler ───────────────────────────────────────────────────────────
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -124,6 +150,8 @@ serve(async (req) => {
 
   const TMDB_API_KEY = Deno.env.get("TMDB_API_TOKEN");
   const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY");
+  const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
   if (!TMDB_API_KEY) {
     return new Response(JSON.stringify({ error: "TMDB_API_TOKEN not configured" }), {
@@ -132,11 +160,23 @@ serve(async (req) => {
     });
   }
 
+  const sb = createClient(SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!);
+
   try {
     const { query } = await req.json();
     if (!query) throw new Error("query parametresi zorunlu");
 
-    // ─── 1. TMDB multi search ─────────────────────────────────────────────
+    // ─── 1. Cache kontrol ─────────────────────────────────────────────────
+    const cacheKey = getCacheKey(query);
+    const cached = await getFromCache(sb, cacheKey);
+    if (cached) {
+      console.log(`Cache hit: ${cacheKey}`);
+      return new Response(JSON.stringify({ results: cached, cached: true }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // ─── 2. TMDB multi search ─────────────────────────────────────────────
     const searchRes = await fetch(
       `${TMDB_BASE}/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}&language=tr-TR&region=TR`,
     );
@@ -151,7 +191,7 @@ serve(async (req) => {
       });
     }
 
-    // ─── 2. Enrich top 5 ──────────────────────────────────────────────────
+    // ─── 3. Enrich top 5 ──────────────────────────────────────────────────
     const enriched = await Promise.all(
       results.slice(0, 5).map(async (item: any) => {
         const type = item.media_type;
@@ -213,9 +253,10 @@ serve(async (req) => {
           console.error("JustWatch hatası:", err);
         }
 
-        // ─── Source: Firecrawl (fallback) ─────────────────────────────────
+        // ─── Source: Firecrawl (smart fallback: < 3 platform) ─────────────
         const fcPlatformNames: string[] = [];
-        if (tmdbPlatformNames.length === 0 && jwPlatformNames.length === 0 && FIRECRAWL_API_KEY) {
+        const knownCount = new Set([...tmdbPlatformNames, ...jwPlatformNames]).size;
+        if (knownCount < 3 && FIRECRAWL_API_KEY) {
           try {
             const fcRes = await fetch("https://api.firecrawl.dev/v1/search", {
               method: "POST",
@@ -231,14 +272,20 @@ serve(async (req) => {
             const fcData = await fcRes.json();
             for (const result of fcData.data || []) {
               const text = result.markdown || result.description || "";
-              fcPlatformNames.push(...extractPlatforms(text));
+              const found = extractPlatforms(text);
+              // Firecrawl'dan sadece bilinmeyen platformları ekle
+              for (const p of found) {
+                if (!tmdbPlatformNames.includes(p) && !jwPlatformNames.includes(p)) {
+                  fcPlatformNames.push(p);
+                }
+              }
             }
           } catch (err) {
             console.error("Firecrawl hatası:", err);
           }
         }
 
-        // ─── AI Validation: Score & Filter ────────────────────────────────
+        // ─── AI Validation ────────────────────────────────────────────────
         const sources = {
           tmdb: [...new Set(tmdbPlatformNames)],
           justwatch: jwPlatformNames,
@@ -248,7 +295,6 @@ serve(async (req) => {
         const validatedNames = validatePlatforms(sources);
         const confidence = getConfidenceScore(sources);
 
-        // Build final platform objects
         const platforms = validatedNames.map((name) => ({
           name,
           logo: PLATFORM_LOGOS[name] || null,
@@ -286,7 +332,14 @@ serve(async (req) => {
     // Only return results with TR platforms
     const filtered = enriched.filter((r) => r.available_in_tr);
 
-    return new Response(JSON.stringify({ results: filtered }), {
+    // ─── 4. Cache'e yaz ───────────────────────────────────────────────────
+    if (filtered.length > 0) {
+      await writeToCache(sb, cacheKey, filtered).catch((err) =>
+        console.error("Cache write error:", err)
+      );
+    }
+
+    return new Response(JSON.stringify({ results: filtered, cached: false }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (err: any) {

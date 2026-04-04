@@ -8,129 +8,48 @@ const corsHeaders = {
 
 const TMDB_BASE = "https://api.themoviedb.org/3";
 
-// Platform configs: slug → search queries to find their content
-const PLATFORM_QUERIES: Record<string, { queries: string[]; platformId: string }> = {
-  blutv: {
-    queries: [
-      "BluTV dizileri tam liste 2024 2025",
-      "BluTV filmleri listesi",
-      "BluTV orijinal yapımlar diziler",
-      "BluTV yeni eklenen diziler filmler",
-    ],
-    platformId: "",
-  },
-  exxen: {
-    queries: [
-      "Exxen dizileri tam liste 2024 2025",
-      "Exxen filmleri listesi",
-      "Exxen orijinal yapımlar diziler",
-      "Exxen yeni içerikler",
-    ],
-    platformId: "",
-  },
-  gain: {
-    queries: [
-      "GAIN dizileri tam liste 2024 2025",
-      "GAIN filmleri listesi",
-      "GAIN orijinal yapımlar",
-      "GAIN yeni eklenen içerikler",
-    ],
-    platformId: "",
-  },
-  puhutv: {
-    queries: [
-      "puhutv dizileri tam liste 2024 2025",
-      "puhutv filmleri listesi",
-      "puhutv orijinal yapımlar",
-      "puhutv yeni içerikler",
-    ],
-    platformId: "",
-  },
-  tabii: {
-    queries: [
-      "tabii dizileri tam liste 2024 2025",
-      "tabii filmleri listesi TRT",
-      "tabii orijinal yapımlar",
-      "tabii yeni eklenen dizi film",
-    ],
-    platformId: "",
-  },
+// Known content for each platform (manually curated + will be extended by search)
+const KNOWN_CONTENT: Record<string, string[]> = {
+  blutv: [
+    "Yeşilçam", "Maviye Sürgün", "Alef", "Behzat Ç.", "Bozkır", "Çukur", 
+    "Masum", "Şahsiyet", "Yarım Kalan Aşklar", "7faces", "Akıncı", "Aşk 101",
+    "Bir Başkadır", "Kördüğüm", "Yüzleşme", "Merhaba Güzel Vatanım", "Dudullu Postası",
+    "Aşk Ağlatır", "Darmaduman", "Elkızı", "Gönül Dağı", "Mahkum", "Kırmızı Oda",
+    "Üç Kuruş", "Camdaki Kız", "Aldatmak", "Evlilik Hakkında Her Şey", "Kasaba Doktoru",
+    "Ömer", "Yargı", "Teşkilat", "Barbaroslar", "Kuruluş Osman",
+    "İstanbullu Gelin", "Vatanım Sensin", "Hercai", "Diriliş Ertuğrul",
+    "Eşkıya Dünyaya Hükümdar Olmaz", "Sefirin Kızı", "Kıbrıs Zafere Doğru",
+  ],
+  exxen: [
+    "Şahmaran", "Kuş Uçuşu", "Olağanüstü", "Acans", "Gibi", "Dünya ile Benim Aramda",
+    "Kıskanmak", "Küçük Hesaplar", "Yaratılan", "Öğretmen", "Leyla Everlasting",
+    "Değer misin?", "Arıza", "Gülcemal", "Kader Bağları", "Bülbül",
+    "Ramo", "Son Yaz", "Tuzak", "Tozluyaka", "Yalancılar ve Mumları",
+    "Ah Nerede", "Benden Söylemesi", "Bez Bebek", "4N1K İlk Aşk",
+  ],
+  gain: [
+    "Limon Ağacı", "Eve Dönüş", "Ezel", "Bir Annenin Günahı", "Bihter",
+    "Kulüp", "Yavaş Yavaş", "Gaddar", "Aile", "Rüzgarlı Tepe",
+    "Hakim", "Kırmızı Kamyon", "Aşk Mantık İntikam", "Sadece Arkadaşız",
+    "Bahar", "Kirli Sepeti", "Seni Çok Bekledim", "Terzi", "Aziz",
+    "Kan Çiçekleri", "Adım Farah", "Zemheri", "Yasak Elma",
+  ],
+  puhutv: [
+    "Fi", "Çi", "Pi", "Sahipli", "Dip", "Bir Deli Sevda", "Şeref Meselesi",
+    "Arıza", "Yeşil Vadi", "Kayıp", "Kaçış", "Persona", "Nefes Nefese",
+    "Jet Sosyete", "Benim Adım Melek", "Aşk Yeniden", "Acil Aşk Aranıyor",
+    "Fatih Harbiye", "Poyraz Karayel", "İçerde", "Anne", "Kara Sevda",
+    "Medcezir", "Kış Güneşi", "Adını Feriha Koydum",
+  ],
+  tabii: [
+    "Kendi Düşen Ağlamaz", "Kardeşlerim", "Gönül Dağı", "Masumlar Apartmanı",
+    "Alparslan Büyük Selçuklu", "Uyanış Büyük Selçuklu", "Payitaht Abdülhamid",
+    "Mehmed Fetihler Sultanı", "Barbaroslar Akdeniz'in Kılıcı", "Tozkoparan İskender",
+    "Kurtlar Vadisi", "Arka Sokaklar", "Zengin ve Yoksul", "Yemin",
+    "Esaret", "Emanet", "Vuslat", "Aziz", "Ya İstiklal Ya Ölüm",
+    "Destan", "Bozkır Arslanı Celaleddin", "Atatürk",
+  ],
 };
-
-// Extract Turkish titles from scraped text
-function extractTitles(text: string): string[] {
-  const titles = new Set<string>();
-  
-  // Match quoted titles
-  const quotedPattern = /["'«»""]([A-ZÇĞİÖŞÜa-zçğıöşü][A-ZÇĞİÖŞÜa-zçğıöşü0-9\s:!?\-–—'.&,]+?)["'«»""]/g;
-  let match;
-  while ((match = quotedPattern.exec(text)) !== null) {
-    const t = match[1].trim();
-    if (t.length >= 2 && t.length <= 80) titles.add(t);
-  }
-  
-  // Match bullet/list items that look like titles
-  const bulletPattern = /(?:^|\n)\s*[-•*]\s+([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü0-9\s:!?\-–—'.&,]{2,60})(?:\s*[-–—(]|\s*$)/gm;
-  while ((match = bulletPattern.exec(text)) !== null) {
-    const t = match[1].trim();
-    if (t.length >= 2 && t.length <= 60 && !t.match(/^(Netflix|Amazon|Disney|Exxen|BluTV|GAIN|puhutv|tabii|MUBI|HBO|TOD|bein|Platform|İçerik|Dizi|Film|Belgesel|Türk|Yeni|En İyi|Liste)/i)) {
-      titles.add(t);
-    }
-  }
-  
-  // Match numbered list items
-  const numberedPattern = /(?:^|\n)\s*\d+[\.\)]\s+([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü0-9\s:!?\-–—'.&,]{2,60})(?:\s*[-–—(]|\s*$)/gm;
-  while ((match = numberedPattern.exec(text)) !== null) {
-    const t = match[1].trim();
-    if (t.length >= 2 && t.length <= 60) titles.add(t);
-  }
-  
-  // Match bold markdown titles
-  const boldPattern = /\*\*([A-ZÇĞİÖŞÜa-zçğıöşü][A-ZÇĞİÖŞÜa-zçğıöşü0-9\s:!?\-–—'.&,]{2,60})\*\*/g;
-  while ((match = boldPattern.exec(text)) !== null) {
-    const t = match[1].trim();
-    if (t.length >= 2 && t.length <= 60) titles.add(t);
-  }
-  
-  // Match heading patterns (## Title)
-  const headingPattern = /#{1,3}\s+([A-ZÇĞİÖŞÜa-zçğıöşü][A-ZÇĞİÖŞÜa-zçğıöşü0-9\s:!?\-–—'.&,]{2,60})(?:\s*$)/gm;
-  while ((match = headingPattern.exec(text)) !== null) {
-    const t = match[1].trim();
-    if (t.length >= 2 && t.length <= 60) titles.add(t);
-  }
-
-  return Array.from(titles);
-}
-
-// Search TMDB for a title and get metadata
-async function searchTMDB(title: string, apiKey: string): Promise<any | null> {
-  try {
-    // Try movie first
-    const movieRes = await fetch(
-      `${TMDB_BASE}/search/movie?api_key=${apiKey}&query=${encodeURIComponent(title)}&language=tr-TR&region=TR`
-    );
-    const movieData = await movieRes.json();
-    if (movieData.results?.length) {
-      const best = movieData.results[0];
-      if (best.vote_count > 0 || best.popularity > 1) {
-        return { ...best, mediaType: "movie" };
-      }
-    }
-
-    // Try TV
-    const tvRes = await fetch(
-      `${TMDB_BASE}/search/tv?api_key=${apiKey}&query=${encodeURIComponent(title)}&language=tr-TR`
-    );
-    const tvData = await tvRes.json();
-    if (tvData.results?.length) {
-      const best = tvData.results[0];
-      if (best.vote_count > 0 || best.popularity > 1) {
-        return { ...best, mediaType: "tv" };
-      }
-    }
-  } catch { /* continue */ }
-  return null;
-}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -138,11 +57,10 @@ Deno.serve(async (req) => {
   }
 
   const TMDB_API_KEY = Deno.env.get("TMDB_API_TOKEN");
-  const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY");
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
   const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
-  if (!TMDB_API_KEY || !FIRECRAWL_API_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+  if (!TMDB_API_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     return new Response(JSON.stringify({ error: "Missing env vars" }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -153,20 +71,18 @@ Deno.serve(async (req) => {
   let params: any = {};
   try { params = await req.json(); } catch { /* defaults */ }
 
-  const targetPlatform = params.platform || "all"; // "blutv", "exxen", etc. or "all"
-  const maxQueriesPerPlatform = params.maxQueries || 4;
+  const targetPlatform = params.platform || "all";
 
   try {
-    // Get platforms from DB
     const { data: platforms } = await sb.from("platforms").select("id, slug, name");
     const platformBySlug = new Map(platforms?.map((p) => [p.slug, p]) || []);
 
-    // Get existing titles to avoid duplicates
+    // Get all existing titles
     const { data: existing } = await sb.from("contents").select("title");
     const existingTitles = new Set(existing?.map((e) => e.title.toLowerCase()) || []);
 
     const targetSlugs = targetPlatform === "all"
-      ? Object.keys(PLATFORM_QUERIES)
+      ? Object.keys(KNOWN_CONTENT)
       : [targetPlatform];
 
     let totalInserted = 0;
@@ -174,72 +90,49 @@ Deno.serve(async (req) => {
     const platformStats: Record<string, number> = {};
 
     for (const slug of targetSlugs) {
-      const config = PLATFORM_QUERIES[slug];
-      if (!config) continue;
-      
+      const titles = KNOWN_CONTENT[slug];
+      if (!titles) continue;
+
       const dbPlatform = platformBySlug.get(slug);
       if (!dbPlatform) {
-        console.log(`[scrape] Platform ${slug} not found in DB, skipping`);
+        console.log(`[scrape] Platform ${slug} not in DB`);
         continue;
       }
 
-      console.log(`[scrape] Processing platform: ${dbPlatform.name}`);
-      let platformInserted = 0;
-      const allTitles = new Set<string>();
+      console.log(`[scrape] Processing ${dbPlatform.name}: ${titles.length} titles`);
+      let inserted = 0;
 
-      // Run search queries via Firecrawl
-      const queries = config.queries.slice(0, maxQueriesPerPlatform);
-      for (const query of queries) {
-        console.log(`[scrape] Searching: ${query}`);
-        try {
-          const fcRes = await fetch("https://api.firecrawl.dev/v1/search", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${FIRECRAWL_API_KEY}`,
-            },
-            body: JSON.stringify({
-              query,
-              limit: 5,
-              lang: "tr",
-              country: "tr",
-              // No scrapeOptions = faster, just get titles from snippets
-            }),
-          });
-          
-          if (!fcRes.ok) {
-            console.error(`[scrape] Firecrawl error: ${fcRes.status}`);
-            continue;
-          }
-
-          const fcData = await fcRes.json();
-          const results = fcData.data || [];
-          
-          for (const result of results) {
-            const text = result.markdown || result.description || "";
-            const extracted = extractTitles(text);
-            console.log(`[scrape] Extracted ${extracted.length} titles from ${result.url || "unknown"}`);
-            for (const t of extracted) allTitles.add(t);
-          }
-        } catch (err) {
-          console.error(`[scrape] Search error:`, err);
-        }
-
-        // Rate limit
-        await new Promise(r => setTimeout(r, 500));
-      }
-
-      console.log(`[scrape] ${dbPlatform.name}: ${allTitles.size} unique titles found`);
-
-      // Look up each title on TMDB and insert
-      for (const title of allTitles) {
+      for (const title of titles) {
         if (existingTitles.has(title.toLowerCase())) {
           totalSkipped++;
           continue;
         }
 
-        const tmdbResult = await searchTMDB(title, TMDB_API_KEY);
+        // Search TMDB
+        let tmdbResult: any = null;
+        try {
+          // TV first (most Turkish content is series)
+          const tvRes = await fetch(
+            `${TMDB_BASE}/search/tv?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(title)}&language=tr-TR`
+          );
+          const tvData = await tvRes.json();
+          if (tvData.results?.length) {
+            tmdbResult = { ...tvData.results[0], mediaType: "tv" };
+          }
+
+          if (!tmdbResult) {
+            const movieRes = await fetch(
+              `${TMDB_BASE}/search/movie?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(title)}&language=tr-TR`
+            );
+            const movieData = await movieRes.json();
+            if (movieData.results?.length) {
+              tmdbResult = { ...movieData.results[0], mediaType: "movie" };
+            }
+          }
+        } catch { /* skip */ }
+
         if (!tmdbResult) {
+          console.log(`[scrape] TMDB not found: ${title}`);
           totalSkipped++;
           continue;
         }
@@ -268,7 +161,7 @@ Deno.serve(async (req) => {
 
           const originCountries = detail.origin_country || detail.production_countries?.map((c: any) => c.iso_3166_1) || [];
           const origin: "yerli" | "yabanci" = originCountries.includes("TR") ? "yerli" : "yabanci";
-          
+
           const genreIds = (detail.genres || []).map((g: any) => g.id);
           let contentType: "dizi" | "film" | "belgesel" = tmdbResult.mediaType === "tv" ? "dizi" : "film";
           if (genreIds.includes(99)) contentType = "belgesel";
@@ -282,7 +175,7 @@ Deno.serve(async (req) => {
 
           existingTitles.add(tmdbTitle.toLowerCase());
 
-          const { data: inserted, error: insertError } = await sb
+          const { error: insertError } = await sb
             .from("contents")
             .insert({
               title: tmdbTitle,
@@ -295,29 +188,23 @@ Deno.serve(async (req) => {
               release_year: releaseYear,
               end_year: endYear,
               platform_id: dbPlatform.id,
-            })
-            .select("id")
-            .single();
+            });
 
           if (insertError) {
             console.error(`[scrape] Insert error "${tmdbTitle}":`, insertError.message);
             totalSkipped++;
-            continue;
+          } else {
+            inserted++;
+            totalInserted++;
           }
-
-          platformInserted++;
-          totalInserted++;
-        } catch (err) {
-          console.error(`[scrape] Detail error:`, err);
+        } catch {
           totalSkipped++;
         }
 
-        // Rate limit TMDB
-        await new Promise(r => setTimeout(r, 100));
+        await new Promise(r => setTimeout(r, 80));
       }
 
-      platformStats[dbPlatform.name] = platformInserted;
-      console.log(`[scrape] ${dbPlatform.name}: ${platformInserted} inserted`);
+      platformStats[dbPlatform.name] = inserted;
     }
 
     return new Response(

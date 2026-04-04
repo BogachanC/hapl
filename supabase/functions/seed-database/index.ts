@@ -110,7 +110,7 @@ const SEED_QUERIES = {
     url: "/discover/tv?with_origin_country=TR&sort_by=popularity.desc&language=tr-TR&page=",
     type: "dizi" as const,
     origin: "yerli" as const,
-    pages: 5,
+    pages: 2,
   },
   turkish_movies: {
     url: "/discover/movie?region=TR&with_origin_country=TR&sort_by=popularity.desc&language=tr-TR&page=",

@@ -43,7 +43,7 @@ const TMDB_PROVIDER_SLUG: Record<number, string> = {
 
 // ─── Firecrawl text extraction ──────────────────────────────────────────────
 const PLATFORM_KEYWORDS: Record<string, string> = {
-  netflix: "netflix", blutv: "blutv", "blu tv": "blutv",
+  netflix: "netflix", blutv: "hbo-max", "blu tv": "hbo-max",
   disney: "disney-plus", "amazon prime": "prime-video", "prime video": "prime-video",
   "apple tv": "tv-plus", "tv+": "tv-plus", mubi: "mubi",
   gain: "gain", puhutv: "puhutv", puhu: "puhutv",

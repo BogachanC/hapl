@@ -134,6 +134,25 @@ const AdminPanel = () => {
     );
   };
 
+  const seedDatabase = async () => {
+    if (!confirm('Mevcut tüm içerikler silinip TMDB\'den yeniden çekilecek. Devam?')) return;
+    setSeeding(true);
+    setSeedResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke('seed-database', {
+        body: {},
+      });
+      if (error) throw error;
+      setSeedResult(data.message || `${data.inserted} içerik eklendi`);
+      toast.success(data.message || 'Veritabanı güncellendi!');
+    } catch (e: any) {
+      toast.error('Seed hatası: ' + (e.message || 'Bilinmeyen hata'));
+      setSeedResult('Hata oluştu: ' + (e.message || ''));
+    } finally {
+      setSeeding(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-50 bg-background/80 backdrop-blur-xl border-b border-border/50">

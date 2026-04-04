@@ -20,6 +20,85 @@ const PLATFORM_MAP: Record<number, { name: string; logo: string }> = {
   384: { name: "HBO Max",         logo: "https://image.tmdb.org/t/p/original/Ajqyt5aNxNx9pi1zs5o1dpAKnHo.jpg" },
 };
 
+// JustWatch provider ID → platform name
+const JW_PROVIDER_MAP: Record<number, string> = {
+  8: "Netflix",
+  9: "Amazon Prime",
+  337: "Disney+",
+  384: "BluTV",
+  356: "Exxen",
+  119: "Apple TV+",
+  188: "YouTube Premium",
+  567: "Gain",
+  618: "Mubi",
+};
+
+// Platform keyword extraction from text
+const PLATFORM_KEYWORDS: Record<string, string> = {
+  netflix: "Netflix",
+  blutv: "BluTV",
+  "blu tv": "BluTV",
+  disney: "Disney+",
+  "amazon prime": "Amazon Prime",
+  "prime video": "Amazon Prime",
+  "apple tv": "Apple TV+",
+  mubi: "Mubi",
+  gain: "Gain",
+  puhutv: "Puhu TV",
+  exxen: "Exxen",
+  "hbo max": "HBO Max",
+  "youtube premium": "YouTube Premium",
+};
+
+// Source weights for AI validation scoring
+const SOURCE_WEIGHTS: Record<string, number> = {
+  tmdb: 0.8,
+  justwatch: 0.7,
+  firecrawl: 0.4,
+};
+
+const VALIDATION_THRESHOLD = 0.4;
+
+// ─── AI Validation: Score-based platform filtering ──────────────────────────
+function validatePlatforms(
+  sources: Record<string, string[]>
+): string[] {
+  const scores: Record<string, number> = {};
+
+  for (const [source, platforms] of Object.entries(sources)) {
+    const weight = SOURCE_WEIGHTS[source] || 0.2;
+    for (const p of platforms) {
+      if (!scores[p]) scores[p] = 0;
+      scores[p] += weight;
+    }
+  }
+
+  return Object.entries(scores)
+    .filter(([_, score]) => score >= VALIDATION_THRESHOLD)
+    .sort((a, b) => b[1] - a[1])
+    .map(([platform]) => platform);
+}
+
+// Extract platform names from text
+function extractPlatformsFromText(text: string): string[] {
+  const lower = text.toLowerCase();
+  const found = new Set<string>();
+  for (const [keyword, name] of Object.entries(PLATFORM_KEYWORDS)) {
+    if (lower.includes(keyword)) {
+      found.add(name);
+    }
+  }
+  return Array.from(found);
+}
+
+// Get logo URL for a platform name
+function getPlatformLogo(name: string): string | null {
+  for (const entry of Object.values(PLATFORM_MAP)) {
+    if (entry.name === name) return entry.logo;
+  }
+  return null;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -39,7 +118,7 @@ serve(async (req) => {
     const { query } = await req.json();
     if (!query) throw new Error("query parametresi zorunlu");
 
-    // 1. TMDB multi search
+    // ─── 1. TMDB multi search ─────────────────────────────────────────────
     const searchRes = await fetch(
       `${TMDB_BASE}/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}&language=tr-TR&region=TR`,
     );
@@ -54,7 +133,7 @@ serve(async (req) => {
       });
     }
 
-    // 2. Enrich top 5
+    // ─── 2. Enrich top 5 ──────────────────────────────────────────────────
     const enriched = await Promise.all(
       results.slice(0, 5).map(async (item: any) => {
         const type = item.media_type;
@@ -69,28 +148,69 @@ serve(async (req) => {
         const providerData = await providerRes.json();
         const trProviders = providerData.results?.TR || {};
 
-        const flatrate = (trProviders.flatrate || []).map((p: any) => ({
-          id: p.provider_id,
-          name: PLATFORM_MAP[p.provider_id]?.name || p.provider_name,
-          logo: PLATFORM_MAP[p.provider_id]?.logo || `https://image.tmdb.org/t/p/original${p.logo_path}`,
-          type: "subscription",
-          link: trProviders.link || null,
-        }));
+        // ─── Source: TMDB ─────────────────────────────────────────────────
+        const tmdbPlatformNames: string[] = [];
+        const tmdbPlatformDetails: any[] = [];
 
-        const rent = (trProviders.rent || []).map((p: any) => ({
-          id: p.provider_id,
-          name: PLATFORM_MAP[p.provider_id]?.name || p.provider_name,
-          logo: PLATFORM_MAP[p.provider_id]?.logo || `https://image.tmdb.org/t/p/original${p.logo_path}`,
-          type: "rent",
-          link: trProviders.link || null,
-        }));
+        for (const p of (trProviders.flatrate || [])) {
+          const name = PLATFORM_MAP[p.provider_id]?.name || p.provider_name;
+          tmdbPlatformNames.push(name);
+          tmdbPlatformDetails.push({
+            id: p.provider_id,
+            name,
+            logo: PLATFORM_MAP[p.provider_id]?.logo || `https://image.tmdb.org/t/p/original${p.logo_path}`,
+            type: "subscription",
+            link: trProviders.link || null,
+            source: "tmdb",
+          });
+        }
+        for (const p of (trProviders.rent || [])) {
+          const name = PLATFORM_MAP[p.provider_id]?.name || p.provider_name;
+          tmdbPlatformNames.push(name);
+          tmdbPlatformDetails.push({
+            id: p.provider_id,
+            name,
+            logo: PLATFORM_MAP[p.provider_id]?.logo || `https://image.tmdb.org/t/p/original${p.logo_path}`,
+            type: "rent",
+            link: trProviders.link || null,
+            source: "tmdb",
+          });
+        }
 
-        const allPlatforms = [...flatrate, ...rent];
+        // ─── Source: JustWatch ────────────────────────────────────────────
+        const jwPlatformNames: string[] = [];
+        const title = detail.title || detail.name || query;
 
-        // 3. Firecrawl fallback
-        let firecrawlPlatforms: any[] = [];
-        if (allPlatforms.length === 0 && FIRECRAWL_API_KEY) {
-          const title = detail.title || detail.name || query;
+        try {
+          const jwRes = await fetch("https://apis.justwatch.com/content/titles/tr_TR/popular", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              query: title,
+              page_size: 1,
+              page: 1,
+              content_types: type === "movie" ? ["movie"] : ["show"],
+            }),
+          });
+          const jwData = await jwRes.json();
+          if (jwData.items && jwData.items.length > 0) {
+            const offers = jwData.items[0].offers || [];
+            const seen = new Set<string>();
+            for (const o of offers) {
+              const name = JW_PROVIDER_MAP[o.provider_id];
+              if (name && !seen.has(name)) {
+                seen.add(name);
+                jwPlatformNames.push(name);
+              }
+            }
+          }
+        } catch (err) {
+          console.error("JustWatch hatası:", err);
+        }
+
+        // ─── Source: Firecrawl (fallback) ─────────────────────────────────
+        const fcPlatformNames: string[] = [];
+        if (tmdbPlatformNames.length === 0 && jwPlatformNames.length === 0 && FIRECRAWL_API_KEY) {
           try {
             const fcRes = await fetch("https://api.firecrawl.dev/v1/search", {
               method: "POST",
@@ -103,48 +223,55 @@ serve(async (req) => {
                 limit: 5,
                 lang: "tr",
                 country: "tr",
+                location: { country: "TR", languages: ["tr"] },
                 scrapeOptions: { formats: ["markdown"] },
               }),
             });
             const fcData = await fcRes.json();
 
-            const platformKeywords: Record<string, string> = {
-              netflix: "Netflix",
-              blutv: "BluTV",
-              "blu tv": "BluTV",
-              disney: "Disney+",
-              "amazon prime": "Amazon Prime",
-              "prime video": "Amazon Prime",
-              "apple tv": "Apple TV+",
-              mubi: "Mubi",
-              gain: "Gain",
-              puhutv: "Puhu TV",
-            };
-
-            const foundNames = new Set<string>();
             for (const result of fcData.data || []) {
-              const text = (result.markdown || result.description || "").toLowerCase();
-              for (const [keyword, platformName] of Object.entries(platformKeywords)) {
-                if (text.includes(keyword) && !foundNames.has(platformName)) {
-                  foundNames.add(platformName);
-                  firecrawlPlatforms.push({
-                    name: platformName,
-                    logo: null,
-                    type: "subscription",
-                    link: result.url || null,
-                    source: "firecrawl",
-                  });
-                }
-              }
+              const text = (result.markdown || result.description || "");
+              const found = extractPlatformsFromText(text);
+              fcPlatformNames.push(...found);
             }
           } catch (err) {
             console.error("Firecrawl hatası:", err);
           }
         }
 
-        const title = detail.title || detail.name;
+        // ─── AI Validation: Score & Filter ────────────────────────────────
+        const validatedNames = validatePlatforms({
+          tmdb: tmdbPlatformNames,
+          justwatch: jwPlatformNames,
+          firecrawl: [...new Set(fcPlatformNames)],
+        });
+
+        // Build final platform objects with details
+        const platformsMap = new Map<string, any>();
+
+        // Add TMDB details first (highest quality data)
+        for (const p of tmdbPlatformDetails) {
+          if (validatedNames.includes(p.name)) {
+            platformsMap.set(p.name, p);
+          }
+        }
+
+        // Add remaining validated platforms from other sources
+        for (const name of validatedNames) {
+          if (!platformsMap.has(name)) {
+            platformsMap.set(name, {
+              name,
+              logo: getPlatformLogo(name),
+              type: "subscription",
+              link: trProviders.link || null,
+              source: jwPlatformNames.includes(name) ? "justwatch" : "firecrawl",
+            });
+          }
+        }
+
         const releaseDate = detail.release_date || detail.first_air_date || "";
         const year = releaseDate ? new Date(releaseDate).getFullYear() : null;
+        const finalPlatforms = Array.from(platformsMap.values());
 
         return {
           id,
@@ -157,9 +284,9 @@ serve(async (req) => {
           imdb_rating: detail.vote_average ? Math.round(detail.vote_average * 10) / 10 : null,
           vote_count: detail.vote_count || 0,
           genres: (detail.genres || []).map((g: any) => g.name),
-          platforms: allPlatforms.length > 0 ? allPlatforms : firecrawlPlatforms,
+          platforms: finalPlatforms,
           tmdb_url: `https://www.themoviedb.org/${type}/${id}`,
-          available_in_tr: allPlatforms.length > 0 || firecrawlPlatforms.length > 0,
+          available_in_tr: finalPlatforms.length > 0,
         };
       }),
     );

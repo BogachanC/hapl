@@ -40,11 +40,13 @@ const ContentDetail = () => {
   const allPlatforms = getAllPlatforms(content);
 
   const yearDisplay = content.release_year
-    ? content.end_year
-      ? `${content.release_year}–${content.end_year}`
-      : content.status === 'bitti'
-        ? `${content.release_year}`
-        : `${content.release_year}–`
+    ? content.content_type === 'film' || content.content_type === 'belgesel'
+      ? `${content.release_year}`
+      : content.end_year
+        ? `${content.release_year}–${content.end_year}`
+        : content.status === 'yayinda'
+          ? `${content.release_year} – Devam Ediyor`
+          : `${content.release_year}`
     : null;
 
   const typeLabel = content.content_type === 'dizi' ? 'Dizi' : content.content_type === 'belgesel' ? 'Belgesel' : 'Film';

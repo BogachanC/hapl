@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
 export interface Platform {
@@ -33,6 +33,8 @@ interface SearchState {
   hasSearched: boolean;
 }
 
+const DEBOUNCE_MS = 500;
+
 export function useContentSearch() {
   const [state, setState] = useState<SearchState>({
     results: [],
@@ -40,15 +42,25 @@ export function useContentSearch() {
     error: null,
     hasSearched: false,
   });
+  const [query, setQuery] = useState("");
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
-  const search = useCallback(async (query: string) => {
-    if (!query.trim()) return;
+  const fetchResults = useCallback(async (q: string) => {
+    if (!q.trim()) {
+      setState({ results: [], loading: false, error: null, hasSearched: false });
+      return;
+    }
+
+    // Cancel previous in-flight request
+    if (abortRef.current) abortRef.current.abort();
+    abortRef.current = new AbortController();
 
     setState((prev) => ({ ...prev, loading: true, error: null, hasSearched: true }));
 
     try {
       const { data, error } = await supabase.functions.invoke("search-content", {
-        body: { query: query.trim() },
+        body: { query: q.trim() },
       });
 
       if (error) throw new Error(error.message);
@@ -60,6 +72,7 @@ export function useContentSearch() {
         hasSearched: true,
       });
     } catch (err: any) {
+      if (err?.name === "AbortError") return;
       setState({
         results: [],
         loading: false,
@@ -70,9 +83,33 @@ export function useContentSearch() {
     }
   }, []);
 
+  // Debounced search on query change
+  useEffect(() => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+
+    if (!query.trim()) {
+      setState({ results: [], loading: false, error: null, hasSearched: false });
+      return;
+    }
+
+    // Show loading immediately
+    setState((prev) => ({ ...prev, loading: true, hasSearched: true }));
+
+    timerRef.current = setTimeout(() => {
+      fetchResults(query);
+    }, DEBOUNCE_MS);
+
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, [query, fetchResults]);
+
   const clear = useCallback(() => {
+    setQuery("");
+    if (timerRef.current) clearTimeout(timerRef.current);
+    if (abortRef.current) abortRef.current.abort();
     setState({ results: [], loading: false, error: null, hasSearched: false });
   }, []);
 
-  return { ...state, search, clear };
+  return { ...state, query, setQuery, clear };
 }

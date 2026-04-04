@@ -300,7 +300,7 @@ serve(async (req) => {
         }
 
         // Rate limit delay
-        await new Promise((r) => setTimeout(r, 250));
+        await new Promise((r) => setTimeout(r, 100));
       }
     }
 

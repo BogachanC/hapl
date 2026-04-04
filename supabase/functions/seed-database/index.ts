@@ -212,9 +212,70 @@ serve(async (req) => {
             if (slug) tmdbSlugs.push(slug);
           }
 
-          // Seed'de sadece TMDB providers kullan (hız için)
-          // JustWatch + Firecrawl search-content'te kullanılıyor
-          const validatedSlugs = [...new Set(tmdbSlugs)];
+          // ─── Source: JustWatch (sadece TMDB boşsa) ──────────────────
+          const jwSlugs: string[] = [];
+          if (tmdbSlugs.length === 0) {
+            try {
+              const jwRes = await fetch("https://apis.justwatch.com/content/titles/tr_TR/popular", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  query: title,
+                  page_size: 1,
+                  page: 1,
+                  content_types: mediaType === "movie" ? ["movie"] : ["show"],
+                }),
+              });
+              const jwData = await jwRes.json();
+              if (jwData.items && jwData.items.length > 0) {
+                const offers = jwData.items[0].offers || [];
+                const seen = new Set<string>();
+                for (const o of offers) {
+                  if (o.monetization_type === "flatrate") {
+                    const slug = JW_PROVIDER_SLUG[o.provider_id];
+                    if (slug && !seen.has(slug)) {
+                      seen.add(slug);
+                      jwSlugs.push(slug);
+                    }
+                  }
+                }
+              }
+            } catch (err) {
+              console.error(`JustWatch hatası (${title}):`, err);
+            }
+          }
+
+          // ─── Source: Firecrawl (TMDB + JW ikisi de boşsa) ─────────────
+          const fcSlugs: string[] = [];
+          if (tmdbSlugs.length === 0 && jwSlugs.length === 0 && FIRECRAWL_API_KEY) {
+            try {
+              const fcRes = await fetch("https://api.firecrawl.dev/v1/search", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${FIRECRAWL_API_KEY}`,
+                },
+                body: JSON.stringify({
+                  query: `${title} Türkiye hangi platformda`,
+                  limit: 3,
+                }),
+              });
+              const fcData = await fcRes.json();
+              for (const result of fcData.data || []) {
+                const text = result.markdown || result.description || "";
+                fcSlugs.push(...extractPlatformSlugs(text));
+              }
+            } catch (err) {
+              console.error(`Firecrawl hatası (${title}):`, err);
+            }
+          }
+
+          // ─── AI Validation ────────────────────────────────────────────
+          const validatedSlugs = validateSlugs({
+            tmdb: [...new Set(tmdbSlugs)],
+            justwatch: jwSlugs,
+            firecrawl: [...new Set(fcSlugs)],
+          });
 
           // Resolve to DB platform IDs
           const matchedPlatforms = validatedSlugs

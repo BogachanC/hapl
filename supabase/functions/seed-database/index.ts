@@ -13,7 +13,7 @@ const TMDB_BASE = "https://api.themoviedb.org/3";
 const JW_PROVIDER_SLUG: Record<number, string> = {
   8: "netflix", 9: "prime-video", 119: "prime-video",
   337: "disney-plus",
-  384: "blutv", 341: "blutv",
+  384: "hbo-max", 341: "hbo-max",
   356: "exxen", 1796: "exxen",
   350: "tv-plus", 1871: "tv-plus",
   11: "mubi", 618: "mubi",

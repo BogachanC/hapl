@@ -86,7 +86,15 @@ const Index = () => {
       </header>
 
       <main className="container max-w-lg mx-auto px-4 py-4 space-y-4">
-        <SearchBar value={search} onChange={setSearch} />
+        <SearchBar
+          value={search}
+          onChange={(v) => {
+            setSearch(v);
+            if (!v) clearSearch();
+          }}
+          onSearch={doSearch}
+          loading={searchLoading}
+        />
         <TypeFilter selected={selectedType} onSelect={setSelectedType} />
         {platforms && <PlatformFilter platforms={platforms} selected={selectedPlatform} onSelect={setSelectedPlatform} />}
         <AdvancedFilter

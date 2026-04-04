@@ -10,7 +10,7 @@ const TMDB_BASE = "https://api.themoviedb.org/3";
 
 // Known content for each platform (manually curated + will be extended by search)
 const KNOWN_CONTENT: Record<string, string[]> = {
-  blutv: [
+  "hbo-max": [
     "Yeşilçam", "Maviye Sürgün", "Alef", "Behzat Ç.", "Bozkır", "Çukur", 
     "Masum", "Şahsiyet", "Yarım Kalan Aşklar", "7faces", "Akıncı", "Aşk 101",
     "Bir Başkadır", "Kördüğüm", "Yüzleşme", "Merhaba Güzel Vatanım", "Dudullu Postası",

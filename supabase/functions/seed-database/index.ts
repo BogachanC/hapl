@@ -13,7 +13,7 @@ const TMDB_BASE = "https://api.themoviedb.org/3";
 const JW_PROVIDER_SLUG: Record<number, string> = {
   8: "netflix", 9: "prime-video", 119: "prime-video",
   337: "disney-plus",
-  384: "blutv", 341: "blutv",
+  384: "hbo-max", 341: "hbo-max",
   356: "exxen", 1796: "exxen",
   350: "tv-plus", 1871: "tv-plus",
   11: "mubi", 618: "mubi",
@@ -29,7 +29,7 @@ const JW_PROVIDER_SLUG: Record<number, string> = {
 // ─── TMDB provider ID → platform slug (fallback) ───────────────────────────
 const TMDB_PROVIDER_SLUG: Record<number, string> = {
   8: "netflix", 337: "disney-plus", 119: "prime-video", 9: "prime-video",
-  341: "blutv", 1899: "blutv",
+  341: "hbo-max", 1899: "hbo-max",
   1796: "exxen", 356: "exxen",
   567: "gain", 456: "gain",
   618: "mubi", 11: "mubi",
@@ -43,7 +43,7 @@ const TMDB_PROVIDER_SLUG: Record<number, string> = {
 
 // ─── Firecrawl text extraction ──────────────────────────────────────────────
 const PLATFORM_KEYWORDS: Record<string, string> = {
-  netflix: "netflix", blutv: "blutv", "blu tv": "blutv",
+  netflix: "netflix", blutv: "hbo-max", "blu tv": "hbo-max",
   disney: "disney-plus", "amazon prime": "prime-video", "prime video": "prime-video",
   "apple tv": "tv-plus", "tv+": "tv-plus", mubi: "mubi",
   gain: "gain", puhutv: "puhutv", puhu: "puhutv",

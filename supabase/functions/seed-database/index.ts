@@ -9,37 +9,102 @@ const corsHeaders = {
 
 const TMDB_BASE = "https://api.themoviedb.org/3";
 
-// TMDB provider ID → our platform slug
-const PROVIDER_SLUG_MAP: Record<number, string> = {
+// ─── TMDB provider ID → platform slug ───────────────────────────────────────
+const TMDB_PROVIDER_SLUG: Record<number, string> = {
   8: "netflix",
   337: "disney-plus",
   119: "prime-video",
-  // BluTV
   341: "blutv",
   1899: "blutv",
-  // Gain
   567: "gain",
-  // Mubi
   618: "mubi",
-  // Apple TV+
-  350: "apple-tv-plus",
-  // HBO Max
+  350: "tv-plus",
   384: "hbo-max",
-  // Exxen
   1796: "exxen",
-  // beIN
   542: "bein-connect",
-  // puhutv
   1870: "puhutv",
-  // tabii (TRT)
   2077: "tabii",
-  // TOD
   1898: "tod",
-  // TV+
   1871: "tv-plus",
+  188: "youtube-premium",
 };
 
-// Content lists to seed - Turkish popular + international popular on TR platforms
+// ─── JustWatch provider ID → platform slug ──────────────────────────────────
+const JW_PROVIDER_SLUG: Record<number, string> = {
+  8: "netflix",
+  9: "prime-video",
+  337: "disney-plus",
+  384: "blutv",
+  356: "exxen",
+  119: "tv-plus",
+  11: "mubi",
+  123: "puhutv",
+  456: "gain",
+  789: "bein-connect",
+  321: "hbo-max",
+  654: "tod",
+  987: "dsmart-go",
+  111: "tabii",
+};
+
+// ─── Platform keyword → slug (Firecrawl fallback) ───────────────────────────
+const PLATFORM_KEYWORDS: Record<string, string> = {
+  netflix: "netflix",
+  blutv: "blutv",
+  "blu tv": "blutv",
+  disney: "disney-plus",
+  "amazon prime": "prime-video",
+  "prime video": "prime-video",
+  "apple tv": "tv-plus",
+  "tv+": "tv-plus",
+  mubi: "mubi",
+  gain: "gain",
+  puhutv: "puhutv",
+  puhu: "puhutv",
+  exxen: "exxen",
+  tabii: "tabii",
+  "bein connect": "bein-connect",
+  bein: "bein-connect",
+  "hbo max": "hbo-max",
+  hbo: "hbo-max",
+  "tod tv": "tod",
+  tod: "tod",
+  "d-smart": "dsmart-go",
+  dsmart: "dsmart-go",
+};
+
+function extractPlatformSlugs(text: string): string[] {
+  const lower = text.toLowerCase();
+  const found = new Set<string>();
+  for (const [keyword, slug] of Object.entries(PLATFORM_KEYWORDS)) {
+    if (lower.includes(keyword)) found.add(slug);
+  }
+  return Array.from(found);
+}
+
+// ─── AI Validation ──────────────────────────────────────────────────────────
+const SOURCE_WEIGHTS: Record<string, number> = {
+  tmdb: 0.5,
+  justwatch: 0.8,
+  firecrawl: 0.3,
+};
+
+function validateSlugs(sources: Record<string, string[]>): string[] {
+  const scores: Record<string, number> = {};
+  for (const [source, slugs] of Object.entries(sources)) {
+    const weight = SOURCE_WEIGHTS[source] || 0.2;
+    for (const s of slugs) {
+      if (!scores[s]) scores[s] = 0;
+      scores[s] += weight;
+    }
+  }
+  return Object.entries(scores)
+    .filter(([_, score]) => score >= 0.3)
+    .sort((a, b) => b[1] - a[1])
+    .map(([slug]) => slug);
+}
+
+// ─── Seed categories ────────────────────────────────────────────────────────
 const SEED_QUERIES = {
   turkish_tv: {
     url: "/discover/tv?with_origin_country=TR&sort_by=popularity.desc&language=tr-TR&page=",
@@ -85,6 +150,7 @@ serve(async (req) => {
   }
 
   const TMDB_API_KEY = Deno.env.get("TMDB_API_TOKEN");
+  const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY");
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
   const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
@@ -111,8 +177,9 @@ serve(async (req) => {
     const seenTitles = new Set<string>();
 
     for (const [category, config] of Object.entries(SEED_QUERIES)) {
+      console.log(`[seed] Kategori: ${category}`);
+
       for (let page = 1; page <= config.pages; page++) {
-        // Fetch discover page
         const discoverRes = await fetch(
           `${TMDB_BASE}${config.url}${page}&api_key=${TMDB_API_KEY}`
         );
@@ -129,38 +196,93 @@ serve(async (req) => {
           const mediaType = config.type === "film" || config.type === "belgesel" ? "movie" : "tv";
           const id = item.id;
 
-          // Get TR watch providers
-          let providerRes;
+          // ─── Source: TMDB providers ───────────────────────────────────
+          let providerData: any = {};
           try {
-            providerRes = await fetch(
+            const providerRes = await fetch(
               `${TMDB_BASE}/${mediaType}/${id}/watch/providers?api_key=${TMDB_API_KEY}`
             );
-          } catch {
-            continue;
-          }
-          const providerData = await providerRes.json();
-          const trProviders = providerData.results?.TR;
+            providerData = await providerRes.json();
+          } catch { /* continue */ }
 
-          // Collect all provider IDs (flatrate + free)
-          const providerIds: number[] = [];
-          for (const p of trProviders?.flatrate || []) providerIds.push(p.provider_id);
-          for (const p of trProviders?.free || []) providerIds.push(p.provider_id);
-
-          // Map to our platform slugs
-          const matchedSlugs = [...new Set(
-            providerIds
-              .map((pid) => PROVIDER_SLUG_MAP[pid])
-              .filter(Boolean)
-          )];
-
-          // Skip if no TR platform found
-          if (matchedSlugs.length === 0) {
-            totalSkipped++;
-            continue;
+          const trProviders = providerData.results?.TR || {};
+          const tmdbSlugs: string[] = [];
+          for (const p of [...(trProviders.flatrate || []), ...(trProviders.free || [])]) {
+            const slug = TMDB_PROVIDER_SLUG[p.provider_id];
+            if (slug) tmdbSlugs.push(slug);
           }
 
-          // Resolve platform IDs
-          const matchedPlatforms = matchedSlugs
+          // ─── Source: JustWatch ────────────────────────────────────────
+          const jwSlugs: string[] = [];
+          try {
+            const jwRes = await fetch("https://apis.justwatch.com/content/titles/tr_TR/popular", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                query: title,
+                page_size: 1,
+                page: 1,
+                content_types: mediaType === "movie" ? ["movie"] : ["show"],
+              }),
+            });
+            const jwData = await jwRes.json();
+            if (jwData.items && jwData.items.length > 0) {
+              const offers = jwData.items[0].offers || [];
+              const seen = new Set<string>();
+              for (const o of offers) {
+                if (o.monetization_type === "flatrate") {
+                  const slug = JW_PROVIDER_SLUG[o.provider_id];
+                  if (slug && !seen.has(slug)) {
+                    seen.add(slug);
+                    jwSlugs.push(slug);
+                  }
+                }
+              }
+            }
+          } catch (err) {
+            console.error(`JustWatch hatası (${title}):`, err);
+          }
+
+          // ─── Source: Firecrawl (smart fallback: < 3) ──────────────────
+          const fcSlugs: string[] = [];
+          const knownCount = new Set([...tmdbSlugs, ...jwSlugs]).size;
+          if (knownCount < 3 && FIRECRAWL_API_KEY) {
+            try {
+              const fcRes = await fetch("https://api.firecrawl.dev/v1/search", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${FIRECRAWL_API_KEY}`,
+                },
+                body: JSON.stringify({
+                  query: `${title} Türkiye hangi platformda`,
+                  limit: 3,
+                }),
+              });
+              const fcData = await fcRes.json();
+              for (const result of fcData.data || []) {
+                const text = result.markdown || result.description || "";
+                const found = extractPlatformSlugs(text);
+                for (const s of found) {
+                  if (!tmdbSlugs.includes(s) && !jwSlugs.includes(s)) {
+                    fcSlugs.push(s);
+                  }
+                }
+              }
+            } catch (err) {
+              console.error(`Firecrawl hatası (${title}):`, err);
+            }
+          }
+
+          // ─── AI Validation ────────────────────────────────────────────
+          const validatedSlugs = validateSlugs({
+            tmdb: [...new Set(tmdbSlugs)],
+            justwatch: jwSlugs,
+            firecrawl: [...new Set(fcSlugs)],
+          });
+
+          // Resolve to DB platform IDs
+          const matchedPlatforms = validatedSlugs
             .map((slug) => platformBySlug.get(slug))
             .filter(Boolean) as { id: string; slug: string; name: string }[];
 
@@ -171,7 +293,7 @@ serve(async (req) => {
 
           seenTitles.add(title);
 
-          // Get details for genres
+          // ─── Get details ──────────────────────────────────────────────
           let genres: string[] = [];
           let overview = item.overview || null;
           let releaseYear: number | null = null;
@@ -193,28 +315,20 @@ serve(async (req) => {
               endYear = new Date(detail.last_air_date).getFullYear();
             }
 
-            // Detect origin from origin_country
             const originCountries = detail.origin_country || detail.production_countries?.map((c: any) => c.iso_3166_1) || [];
-            if (originCountries.includes("TR")) {
-              detectedOrigin = "yerli";
-            }
-          } catch {
-            // Use basic info
-          }
+            if (originCountries.includes("TR")) detectedOrigin = "yerli";
+          } catch { /* use basic info */ }
 
           const posterUrl = item.poster_path
             ? `https://image.tmdb.org/t/p/w500${item.poster_path}`
             : null;
 
-          // Determine status
           let status: "yayinda" | "yakinda" | "bitti" = "yayinda";
-          if (mediaType === "tv") {
-            if (item.status === "Ended" || endYear) status = "bitti";
-          }
+          if (mediaType === "tv" && endYear) status = "bitti";
 
           const primaryPlatform = matchedPlatforms[0];
 
-          // Insert content
+          // ─── Insert content ───────────────────────────────────────────
           const { data: inserted, error: insertError } = await sb
             .from("contents")
             .insert({
@@ -250,7 +364,7 @@ serve(async (req) => {
           totalInserted++;
         }
 
-        // Small delay to avoid rate limiting
+        // Rate limit delay
         await new Promise((r) => setTimeout(r, 250));
       }
     }

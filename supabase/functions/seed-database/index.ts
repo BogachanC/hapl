@@ -216,7 +216,8 @@ serve(async (req) => {
 
           // ─── Source: JustWatch (sadece TMDB boşsa) ──────────────────
           const jwSlugs: string[] = [];
-          if (tmdbSlugs.length === 0) {
+          if (tmdbSlugs.length === 0 && fallbackUsed < MAX_FALLBACK) {
+            fallbackUsed++;
             try {
               const jwRes = await fetch("https://apis.justwatch.com/content/titles/tr_TR/popular", {
                 method: "POST",

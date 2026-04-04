@@ -1,16 +1,19 @@
 import { useState, useMemo, useRef, useCallback } from 'react';
 import haplLogo from '@/assets/hapl-logo.png';
 import { useContents, usePlatforms, PAGE_SIZE, MAX_ITEMS } from '@/hooks/use-contents';
+import { useContentSearch } from '@/hooks/useContentSearch';
 import { SearchBar } from '@/components/SearchBar';
+import { SearchResults } from '@/components/SearchResults';
 import { PlatformFilter } from '@/components/PlatformFilter';
 import { ContentCard } from '@/components/ContentCard';
 import { TypeFilter } from '@/components/TypeFilter';
 import { AdvancedFilter } from '@/components/AdvancedFilter';
-import { Tv, Loader2, Plus } from 'lucide-react';
+import { Tv, Loader2, Plus, ArrowLeft } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 const Index = () => {
   const [search, setSearch] = useState('');
+  const { results: searchResults, loading: searchLoading, hasSearched, search: doSearch, clear: clearSearch } = useContentSearch();
   const [selectedPlatform, setSelectedPlatform] = useState<string | undefined>();
   const [selectedType, setSelectedType] = useState<string | undefined>();
   const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
@@ -83,40 +86,74 @@ const Index = () => {
       </header>
 
       <main className="container max-w-lg mx-auto px-4 py-4 space-y-4">
-        <SearchBar value={search} onChange={setSearch} />
-        <TypeFilter selected={selectedType} onSelect={setSelectedType} />
-        {platforms && <PlatformFilter platforms={platforms} selected={selectedPlatform} onSelect={setSelectedPlatform} />}
-        <AdvancedFilter
-          selectedGenres={selectedGenres}
-          onGenresChange={setSelectedGenres}
-          selectedOrigin={selectedOrigin}
-          onOriginChange={setSelectedOrigin}
-          selectedStatus={selectedStatus}
-          onStatusChange={setSelectedStatus}
+        <SearchBar
+          value={search}
+          onChange={(v) => {
+            setSearch(v);
+            if (!v) clearSearch();
+          }}
+          onSearch={doSearch}
+          loading={searchLoading}
         />
-
-        {isLoading ? (
-          <div className="flex items-center justify-center py-20">
-            <Loader2 className="h-6 w-6 animate-spin text-primary" />
-          </div>
-        ) : visibleContents.length > 0 ? (
+        {hasSearched ? (
           <>
-            <div className="grid grid-cols-3 gap-2.5 pb-4">
-              {visibleContents.map((content, i) => (
-                <ContentCard key={content.id} content={content} index={i} />
-              ))}
-            </div>
-            {hasMore && (
-              <div ref={loadMoreRef} className="flex items-center justify-center py-4">
-                <Loader2 className="h-5 w-5 animate-spin text-primary" />
+            <button
+              onClick={() => { setSearch(''); clearSearch(); }}
+              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              Keşfete dön
+            </button>
+            {searchLoading ? (
+              <div className="flex items-center justify-center py-20">
+                <Loader2 className="h-6 w-6 animate-spin text-primary" />
+              </div>
+            ) : searchResults.length > 0 ? (
+              <SearchResults results={searchResults} />
+            ) : (
+              <div className="text-center py-20 space-y-2">
+                <Tv className="h-10 w-10 text-muted-foreground/30 mx-auto" />
+                <p className="text-sm text-muted-foreground">Sonuç bulunamadı</p>
               </div>
             )}
           </>
         ) : (
-          <div className="text-center py-20 space-y-2">
-            <Tv className="h-10 w-10 text-muted-foreground/30 mx-auto" />
-            <p className="text-sm text-muted-foreground">İçerik bulunamadı</p>
-          </div>
+          <>
+            <TypeFilter selected={selectedType} onSelect={setSelectedType} />
+            {platforms && <PlatformFilter platforms={platforms} selected={selectedPlatform} onSelect={setSelectedPlatform} />}
+            <AdvancedFilter
+              selectedGenres={selectedGenres}
+              onGenresChange={setSelectedGenres}
+              selectedOrigin={selectedOrigin}
+              onOriginChange={setSelectedOrigin}
+              selectedStatus={selectedStatus}
+              onStatusChange={setSelectedStatus}
+            />
+
+            {isLoading ? (
+              <div className="flex items-center justify-center py-20">
+                <Loader2 className="h-6 w-6 animate-spin text-primary" />
+              </div>
+            ) : visibleContents.length > 0 ? (
+              <>
+                <div className="grid grid-cols-3 gap-2.5 pb-4">
+                  {visibleContents.map((content, i) => (
+                    <ContentCard key={content.id} content={content} index={i} />
+                  ))}
+                </div>
+                {hasMore && (
+                  <div ref={loadMoreRef} className="flex items-center justify-center py-4">
+                    <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="text-center py-20 space-y-2">
+                <Tv className="h-10 w-10 text-muted-foreground/30 mx-auto" />
+                <p className="text-sm text-muted-foreground">İçerik bulunamadı</p>
+              </div>
+            )}
+          </>
         )}
       </main>
     </div>

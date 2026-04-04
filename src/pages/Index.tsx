@@ -1,16 +1,19 @@
 import { useState, useMemo, useRef, useCallback } from 'react';
 import haplLogo from '@/assets/hapl-logo.png';
 import { useContents, usePlatforms, PAGE_SIZE, MAX_ITEMS } from '@/hooks/use-contents';
+import { useContentSearch } from '@/hooks/useContentSearch';
 import { SearchBar } from '@/components/SearchBar';
+import { SearchResults } from '@/components/SearchResults';
 import { PlatformFilter } from '@/components/PlatformFilter';
 import { ContentCard } from '@/components/ContentCard';
 import { TypeFilter } from '@/components/TypeFilter';
 import { AdvancedFilter } from '@/components/AdvancedFilter';
-import { Tv, Loader2, Plus } from 'lucide-react';
+import { Tv, Loader2, Plus, ArrowLeft } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 const Index = () => {
   const [search, setSearch] = useState('');
+  const { results: searchResults, loading: searchLoading, hasSearched, search: doSearch, clear: clearSearch } = useContentSearch();
   const [selectedPlatform, setSelectedPlatform] = useState<string | undefined>();
   const [selectedType, setSelectedType] = useState<string | undefined>();
   const [selectedGenres, setSelectedGenres] = useState<string[]>([]);

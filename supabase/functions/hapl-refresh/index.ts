@@ -17,6 +17,7 @@ import {
   tmdbDetail,
   tmdbWatchProvidersTR,
 } from "../_shared/tmdb.ts";
+import { needsHydration, hydrateAliases } from "../_shared/alias-cache.ts";
 import {
   loadProviders,
   matchTmdbProvider,
@@ -69,12 +70,12 @@ async function refreshOne(
   sb: any,
   row: { id: string; tmdb_id: number; tmdb_type: "movie" | "tv"; title: string },
   providers: ProviderRow[],
-): Promise<{ ok: boolean; provider_count: number; flipped: number }> {
+): Promise<{ ok: boolean; provider_count: number; flipped: number; aliases_added: number }> {
   const [detail, watch] = await Promise.all([
     tmdbDetail(row.tmdb_type, row.tmdb_id),
     tmdbWatchProvidersTR(row.tmdb_type, row.tmdb_id),
   ]);
-  if (!detail) return { ok: false, provider_count: 0, flipped: 0 };
+  if (!detail) return { ok: false, provider_count: 0, flipped: 0, aliases_added: 0 };
 
   const now = new Date().toISOString();
 
@@ -173,7 +174,17 @@ async function refreshOne(
     }).eq("id", r.id);
   }
 
-  return { ok: true, provider_count: rows.length, flipped: toExpire.length };
+  // Opportunistic alias backfill — only when stale (TTL-gated). Soft-fails.
+  // Bounded by the cron batch size, so TMDB call rate stays predictable:
+  // each refreshed title triggers at most 2 extra TMDB calls (alt + trans).
+  let aliases_added = 0;
+  try {
+    if (await needsHydration(sb, row.tmdb_id, row.tmdb_type)) {
+      aliases_added = await hydrateAliases(sb, row.tmdb_id, row.tmdb_type, detail);
+    }
+  } catch (_) { /* swallow */ }
+
+  return { ok: true, provider_count: rows.length, flipped: toExpire.length, aliases_added };
 }
 
 serve(async (req) => {
@@ -233,7 +244,8 @@ serve(async (req) => {
     let processed = 0;
     let failed = 0;
     let totalFlipped = 0;
-    const details: Array<{ id: string; title: string; providers: number; flipped: number }> = [];
+    let totalAliases = 0;
+    const details: Array<{ id: string; title: string; providers: number; flipped: number; aliases: number }> = [];
 
     for (const t of titles) {
       try {
@@ -241,8 +253,9 @@ serve(async (req) => {
         if (r.ok) {
           processed++;
           totalFlipped += r.flipped;
+          totalAliases += r.aliases_added;
           details.push({
-            id: t.id, title: t.title, providers: r.provider_count, flipped: r.flipped,
+            id: t.id, title: t.title, providers: r.provider_count, flipped: r.flipped, aliases: r.aliases_added,
           });
         } else {
           failed++;
@@ -254,7 +267,7 @@ serve(async (req) => {
     }
 
     console.log(
-      `[hapl-refresh] processed=${processed} failed=${failed} flipped=${totalFlipped} batch=${batch}`,
+      `[hapl-refresh] processed=${processed} failed=${failed} flipped=${totalFlipped} aliases=${totalAliases} batch=${batch}`,
     );
 
     return new Response(JSON.stringify({
@@ -263,6 +276,7 @@ serve(async (req) => {
       processed,
       failed,
       flipped: totalFlipped,
+      aliases_added: totalAliases,
       details,
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

@@ -12,6 +12,11 @@ import {
 import { firecrawlSearchText } from "../_shared/firecrawl.ts";
 import { getAliases } from "../_shared/aliases.ts";
 import {
+  getAliasExpansions,
+  needsHydration,
+  hydrateAliases,
+} from "../_shared/alias-cache.ts";
+import {
   loadProviders,
   matchTmdbProvider,
   extractProvidersFromText,
@@ -308,12 +313,34 @@ async function enrichCandidate(
     }
   }
 
-  // ── Persist (fire-and-forget) ───────────────────────────────────────────
-  persistTitle(sb, { id: cand.id, media_type: cand.media_type }, detail).then(
-    (titleId) => {
-      if (titleId) persistAvailability(sb, titleId, availabilityRows);
-    },
-  ).catch(() => {});
+  // ── Background tasks: survive past the response via EdgeRuntime.waitUntil ─
+  // Without waitUntil, Supabase edge runtime can terminate the isolate as
+  // soon as the response is sent, killing in-flight DB writes.
+  const ert: any = (globalThis as any).EdgeRuntime;
+  const bg = (p: Promise<any>) => {
+    if (ert?.waitUntil) ert.waitUntil(p.catch(() => {}));
+    else p.catch(() => {});
+  };
+
+  // Persist title + availability
+  bg(
+    persistTitle(sb, { id: cand.id, media_type: cand.media_type }, detail).then(
+      (titleId) => titleId ? persistAvailability(sb, titleId, availabilityRows) : null,
+    ),
+  );
+
+  // Lazy alias hydration — top-ranked only, TTL-gated (30d)
+  if (cand.score >= 0.7) {
+    bg(
+      needsHydration(sb, cand.id, cand.media_type).then((stale) => {
+        if (!stale) return 0;
+        return hydrateAliases(sb, cand.id, cand.media_type, detail).then((n) => {
+          if (n > 0) console.log(`[alias-cache] hydrated id=${cand.id} type=${cand.media_type} rows=${n}`);
+          return n;
+        });
+      }),
+    );
+  }
 
   // ── Confidence: blend TMDB strength + relevance score ───────────────────
   // Calibration:
@@ -407,12 +434,26 @@ serve(async (req) => {
 
     // 2. TMDB multi-search + rank (with multilingual + franchise variant fallback)
     const trimmedQuery = query.trim();
-    const aliasVariants = getAliases(trimmedQuery);
+
+    // Combine MANUAL alias overrides (curated, hand-picked exceptions) with
+    // DB-cached alias expansions (TMDB alt_titles + translations, populated
+    // lazily by previous searches and hapl-refresh). Manual takes precedence
+    // by being injected first; dedupe by normalized form.
+    const manualAliases = getAliases(trimmedQuery);
+    const dbAliases = await getAliasExpansions(sb, trimmedQuery).catch(() => [] as string[]);
+    const normTrim = normalizeTitle(trimmedQuery);
+    const aliasSeen = new Set<string>([normTrim]);
+    const aliasVariants: string[] = [];
+    for (const v of [...manualAliases, ...dbAliases]) {
+      const k = normalizeTitle(v);
+      if (!k || aliasSeen.has(k)) continue;
+      aliasSeen.add(k);
+      aliasVariants.push(v);
+    }
+
     let fallbackUsed: string[] = [];
 
-    // 2a. Always probe known alias/franchise variants in parallel with the
-    // primary query. This expands franchise coverage (e.g. "Şrek" also probes
-    // "Shrek" so Shrek 2/3/4 surface) without changing response shape.
+    // 2a. Probe primary query + all alias variants in parallel.
     const primaryTask = tmdbMultiSearch(trimmedQuery, "tr-TR");
     const variantTasks = aliasVariants.map((v) => tmdbMultiSearch(v, "tr-TR"));
     const [raw, ...variantRaws] = await Promise.all([primaryTask, ...variantTasks]);
@@ -434,7 +475,8 @@ serve(async (req) => {
       }
     }
     console.log(
-      `[hapl] query="${query}" tmdb_raw=${raw.length} variants=${aliasVariants.length} ` +
+      `[hapl] query="${query}" tmdb_raw=${raw.length} ` +
+      `manual_aliases=${manualAliases.length} db_aliases=${dbAliases.length} ` +
       `merged_raw=${mergedRaw.length} ranked=${ranked.length}`,
     );
 

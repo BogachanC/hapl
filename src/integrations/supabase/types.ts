@@ -170,6 +170,45 @@ export type Database = {
           },
         ]
       }
+      content_title_aliases: {
+        Row: {
+          alias: string
+          country: string | null
+          created_at: string
+          id: string
+          language: string | null
+          normalized_alias: string
+          source: string
+          tmdb_id: number
+          tmdb_type: string
+          updated_at: string
+        }
+        Insert: {
+          alias: string
+          country?: string | null
+          created_at?: string
+          id?: string
+          language?: string | null
+          normalized_alias: string
+          source: string
+          tmdb_id: number
+          tmdb_type: string
+          updated_at?: string
+        }
+        Update: {
+          alias?: string
+          country?: string | null
+          created_at?: string
+          id?: string
+          language?: string | null
+          normalized_alias?: string
+          source?: string
+          tmdb_id?: number
+          tmdb_type?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       content_titles: {
         Row: {
           backdrop_path: string | null

@@ -148,42 +148,26 @@ const AdminPanel = () => {
                 <ArrowLeft className="h-4 w-4" />
               </Button>
             </Link>
-            <h1 className="font-heading text-lg font-bold text-foreground">
+            <h1 className="font-heading text-lg font-bold text-foreground flex-1">
               İçerik Ekle (TMDB)
             </h1>
+            {user && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={signOut}
+                className="gap-1.5 text-muted-foreground"
+                title={user.email ?? undefined}
+              >
+                <LogOut className="h-3.5 w-3.5" />
+                Çıkış
+              </Button>
+            )}
           </div>
         </div>
       </header>
 
       <main className="container max-w-lg mx-auto px-4 py-4 space-y-4">
-        {/* Seed Database */}
-        <div className="bg-card rounded-lg border border-border p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Database className="h-4 w-4 text-primary" />
-              <span className="text-sm font-medium text-foreground">Veritabanını Yenile</span>
-            </div>
-            <Button
-              onClick={seedDatabase}
-              disabled={seeding}
-              size="sm"
-              variant="destructive"
-              className="gap-1.5"
-            >
-              {seeding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-              {seeding ? 'Çekiliyor...' : 'TMDB\'den Çek'}
-            </Button>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Tüm içerikleri siler, TMDB'den popüler Türk ve yabancı içerikleri platform bilgileriyle birlikte çeker.
-          </p>
-          {seeding && (
-            <p className="text-xs text-yellow-500">Bu işlem birkaç dakika sürebilir, lütfen bekleyin...</p>
-          )}
-          {seedResult && (
-            <p className="text-xs text-green-500">{seedResult}</p>
-          )}
-        </div>
 
         {/* Content Type Toggle */}
         <div className="flex gap-2">

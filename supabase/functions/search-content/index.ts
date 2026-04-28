@@ -25,7 +25,7 @@ const corsHeaders = {
 };
 
 const CACHE_TTL_SECONDS = 24 * 60 * 60;
-const MAX_ENRICH = 5;
+const MAX_ENRICH = 8;
 // Firecrawl is invoked when title match is strong enough.
 // Used both as fallback (TMDB=0 providers) and as gap-filler
 // (complete missing firecrawl_enabled providers TMDB didn't return).

@@ -244,7 +244,8 @@ serve(async (req) => {
     let processed = 0;
     let failed = 0;
     let totalFlipped = 0;
-    const details: Array<{ id: string; title: string; providers: number; flipped: number }> = [];
+    let totalAliases = 0;
+    const details: Array<{ id: string; title: string; providers: number; flipped: number; aliases: number }> = [];
 
     for (const t of titles) {
       try {
@@ -252,8 +253,9 @@ serve(async (req) => {
         if (r.ok) {
           processed++;
           totalFlipped += r.flipped;
+          totalAliases += r.aliases_added;
           details.push({
-            id: t.id, title: t.title, providers: r.provider_count, flipped: r.flipped,
+            id: t.id, title: t.title, providers: r.provider_count, flipped: r.flipped, aliases: r.aliases_added,
           });
         } else {
           failed++;
@@ -265,7 +267,7 @@ serve(async (req) => {
     }
 
     console.log(
-      `[hapl-refresh] processed=${processed} failed=${failed} flipped=${totalFlipped} batch=${batch}`,
+      `[hapl-refresh] processed=${processed} failed=${failed} flipped=${totalFlipped} aliases=${totalAliases} batch=${batch}`,
     );
 
     return new Response(JSON.stringify({

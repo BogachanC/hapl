@@ -267,10 +267,13 @@ async function enrichCandidate(
   const firecrawlEligible = providers.filter(
     (p) => p.firecrawl_enabled && !seen.has(p.slug),
   );
+  // Skip firecrawl on low-popularity duplicate titles to avoid pasting
+  // mainstream-title web results onto obscure same-name items.
+  const popularEnough = (cand.vote_count ?? 0) >= 50 || cand.score >= 0.95;
   const shouldRunFirecrawl =
     cand.score >= FIRECRAWL_MIN_SCORE &&
-    firecrawlEligible.length > 0 &&
-    (platforms.length === 0 || firecrawlEligible.length >= 1);
+    popularEnough &&
+    firecrawlEligible.length > 0;
 
   if (shouldRunFirecrawl) {
     const text = await firecrawlSearchText(detail.title, cand.release_year);

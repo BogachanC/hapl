@@ -415,30 +415,26 @@ serve(async (req) => {
     const needsFallback = ranked.length === 0 || (ranked[0]?.score ?? 0) < 0.7;
 
     if (needsFallback) {
-      console.log(`[hapl] fallback trigger: ranked=${ranked.length} topScore=${ranked[0]?.score ?? 0}`);
       // 2a. Generic retry with en-US — TMDB's English index sometimes returns
       // hits that the tr-TR localized index misses.
       const rawEn = await tmdbMultiSearch(query.trim(), "en-US");
-      console.log(`[hapl] fallback en-US: raw=${rawEn.length}`);
       if (rawEn.length > 0) {
         const merged = mergeRawById(raw, rawEn);
         const rankedEn = rankTmdbResults(query, merged);
-        console.log(`[hapl] fallback en-US ranked=${rankedEn.length} top=${rankedEn[0]?.score ?? 0}`);
         if (rankedEn.length > 0 && (rankedEn[0].score >= 0.7 || ranked.length === 0)) {
           ranked = rankedEn;
           fallbackUsed.push("en-US");
         }
       }
 
-      // 2b. Alias retry — only if still weak.
+      // 2b. Alias retry — only if still weak. Search each alias and rank against
+      // ITS OWN canonical title (so the alias hit can score highly), then merge.
       const stillWeak = ranked.length === 0 || (ranked[0]?.score ?? 0) < 0.7;
       if (stillWeak) {
         const aliases = getAliases(query.trim());
-        console.log(`[hapl] fallback alias lookup: aliases=[${aliases.join(", ")}]`);
         for (const alias of aliases) {
           const rawAlias = await tmdbMultiSearch(alias, "tr-TR");
           const rankedAlias = rankTmdbResults(alias, rawAlias);
-          console.log(`[hapl] alias="${alias}" raw=${rawAlias.length} ranked=${rankedAlias.length} top=${rankedAlias[0]?.score ?? 0}`);
           if (rankedAlias.length > 0 && rankedAlias[0].score >= 0.7) {
             ranked = mergeRanked(ranked, rankedAlias);
             fallbackUsed.push(`alias:${alias}`);

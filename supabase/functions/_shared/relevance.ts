@@ -161,12 +161,11 @@ export function rankTmdbResults(query: string, raw: any[]): ScoredCandidate[] {
     }
 
     // Multi-token: when a popular dominant sibling exists, prune low-vote
-    // non-dominant siblings — including same-normalized-title duplicates
-    // (e.g. obscure 2013 "Stranger Things" film with 71 votes that share the
-    // exact title with the popular show). The dominant entry itself stays
-    // because it has vote_count ≥ 1000.
-    if (!isShortQuery && hasDominantSibling && score < 0.95) {
-      if ((r.vote_count ?? 0) < 100) continue;
+    // entries — including same-normalized-title duplicates (e.g. obscure 2013
+    // "Stranger Things" film with 71 votes). The dominant entry itself is
+    // protected by its own vote_count ≥ 1000; everything below 100 votes goes.
+    if (!isShortQuery && hasDominantSibling && (r.vote_count ?? 0) < 100) {
+      continue;
     }
 
     const date = r.release_date || r.first_air_date || "";

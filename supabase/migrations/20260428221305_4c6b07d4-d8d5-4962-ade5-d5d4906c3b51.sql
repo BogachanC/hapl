@@ -1,0 +1,1 @@
+DELETE FROM public.search_cache WHERE cache_key IN ('hapl:srek','hapl:srek 2','hapl:srek 3','hapl:shrek','hapl:friends','hapl:dark','hapl:stranger things','hapl:money heist','hapl:la casa de papel');

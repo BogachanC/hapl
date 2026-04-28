@@ -127,16 +127,21 @@ async function refreshOne(
     );
   }
 
-  // Stale flip: rows not seen in this refresh AND old enough
+  // Stale flip: ONLY consider TMDB-sourced rows.
+  // hapl-refresh is TMDB-only; firecrawl rows must NOT be expired here,
+  // they are re-validated via search-content gap-fill (or a future
+  // dedicated firecrawl refresh job).
   const seenKeys = new Set(rows.map((r) => `${r.provider_id}:${r.availability_type}`));
   const staleCutoff = new Date(Date.now() - AVAILABILITY_FRESH_HOURS * 3600 * 1000).toISOString();
   const { data: existing } = await sb
     .from("content_availability")
-    .select("id, provider_id, availability_type, status, checked_at")
+    .select("id, provider_id, availability_type, status, checked_at, source")
     .eq("title_id", row.id)
-    .eq("region", "TR");
+    .eq("region", "TR")
+    .eq("source", "tmdb");
 
   const toExpire = (existing || []).filter((r: any) => {
+    if (r.source !== "tmdb") return false; // defensive: never touch firecrawl rows
     const k = `${r.provider_id}:${r.availability_type}`;
     if (seenKeys.has(k)) return false;
     if (r.status !== "available") return false;

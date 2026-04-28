@@ -38,8 +38,11 @@ export interface TmdbWatchProvidersTR {
   ads: TmdbWatchProvider[];
 }
 
-export async function tmdbMultiSearch(query: string): Promise<any[]> {
-  const url = `${TMDB_BASE}/search/multi?api_key=${getKey()}&query=${encodeURIComponent(query)}&language=tr-TR&region=TR&include_adult=false`;
+export async function tmdbMultiSearch(
+  query: string,
+  language: string = "tr-TR",
+): Promise<any[]> {
+  const url = `${TMDB_BASE}/search/multi?api_key=${getKey()}&query=${encodeURIComponent(query)}&language=${encodeURIComponent(language)}&region=TR&include_adult=false`;
   const res = await fetch(url);
   if (!res.ok) {
     console.error("TMDB multi search failed", res.status);

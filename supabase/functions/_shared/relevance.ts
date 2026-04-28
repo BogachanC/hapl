@@ -59,12 +59,13 @@ export function scoreCandidate(query: string, r: RawTmdbResult): number {
       const votes = Math.min(0.05, (r.vote_count ?? 0) / 10000);
       return 0.9 + pop + votes;
     }
-    // 2-token title where one is the query (e.g. "Dark Matter") — moderate
+    // 2-token title where one is the query (e.g. "Dark Matter", "Thomas & Friends")
+    // — moderate-low. Must NOT compete with the exact match.
     const titleTwo = titleTokens.length === 2 && titleTokens.includes(qTok);
     const origTwo = origTokens.length === 2 && origTokens.includes(qTok);
     if (titleTwo || origTwo) {
       const pop = Math.min(0.05, (r.popularity ?? 0) / 2000);
-      return 0.55 + pop;
+      return 0.4 + pop;
     }
     // Token appears but title is long → very low (Thomas & Friends, Best Friends Whenever…)
     if (titleTokens.includes(qTok) || origTokens.includes(qTok)) {

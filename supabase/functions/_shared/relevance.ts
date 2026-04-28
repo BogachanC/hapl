@@ -129,6 +129,24 @@ export function rankTmdbResults(query: string, raw: any[]): ScoredCandidate[] {
   const qTokens = tokenize(query);
   const isShortQuery = qTokens.length === 1;
   const qNorm = normalizeTitle(query);
+
+  // PASS 1: detect a "dominant" sibling so we can gate weak subset matches.
+  // Dominant = exact-title match (normalized equals query) AND popular (votes ≥ 1000).
+  // When present, low-vote subset entries (e.g. obscure 2013 "Stranger Things"
+  // film with 71 votes) get pruned. When absent (e.g. "Karadayı", "İnci Taneleri"
+  // — only one low-vote entry exists), we keep the entry so the user still sees
+  // their result.
+  let hasDominantSibling = false;
+  for (const r of raw) {
+    if (r.media_type !== "movie" && r.media_type !== "tv") continue;
+    const tNorm = normalizeTitle(r.title || r.name || "");
+    const oNorm = normalizeTitle(r.original_title || r.original_name || "");
+    if ((tNorm === qNorm || oNorm === qNorm) && (r.vote_count ?? 0) >= 1000) {
+      hasDominantSibling = true;
+      break;
+    }
+  }
+
   const out: ScoredCandidate[] = [];
   for (const r of raw) {
     if (r.media_type !== "movie" && r.media_type !== "tv") continue;
@@ -146,6 +164,16 @@ export function rankTmdbResults(query: string, raw: any[]): ScoredCandidate[] {
     // demand at least 100 votes for any non-exact sibling to remain visible.
     // Exact-match entries (score ≥ 0.9) are always kept.
     if (isShortQuery && score < 0.9) {
+      const tNorm = normalizeTitle(title);
+      const oNorm = normalizeTitle(original);
+      const isExactTitle = tNorm === qNorm || oNorm === qNorm;
+      if (!isExactTitle && (r.vote_count ?? 0) < 100) continue;
+    }
+
+    // Multi-token: when a popular dominant sibling exists, prune low-vote
+    // non-exact subset siblings (Stranger Things → Şömine Keyfi/Sene 1985/2013 film).
+    // We only gate when the dominant exists; without it (Karadayı etc.) we keep.
+    if (!isShortQuery && hasDominantSibling && score < 0.95) {
       const tNorm = normalizeTitle(title);
       const oNorm = normalizeTitle(original);
       const isExactTitle = tNorm === qNorm || oNorm === qNorm;

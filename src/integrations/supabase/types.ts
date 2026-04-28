@@ -83,6 +83,57 @@ export type Database = {
           },
         ]
       }
+      content_availability_history: {
+        Row: {
+          availability_id: string | null
+          availability_type: string
+          change_type: string
+          changed_at: string
+          id: string
+          new_confidence: number | null
+          new_source: string | null
+          new_status: string | null
+          old_confidence: number | null
+          old_source: string | null
+          old_status: string | null
+          provider_id: string
+          region: string
+          title_id: string
+        }
+        Insert: {
+          availability_id?: string | null
+          availability_type: string
+          change_type: string
+          changed_at?: string
+          id?: string
+          new_confidence?: number | null
+          new_source?: string | null
+          new_status?: string | null
+          old_confidence?: number | null
+          old_source?: string | null
+          old_status?: string | null
+          provider_id: string
+          region: string
+          title_id: string
+        }
+        Update: {
+          availability_id?: string | null
+          availability_type?: string
+          change_type?: string
+          changed_at?: string
+          id?: string
+          new_confidence?: number | null
+          new_source?: string | null
+          new_status?: string | null
+          old_confidence?: number | null
+          old_source?: string | null
+          old_status?: string | null
+          provider_id?: string
+          region?: string
+          title_id?: string
+        }
+        Relationships: []
+      }
       content_platforms: {
         Row: {
           content_id: string

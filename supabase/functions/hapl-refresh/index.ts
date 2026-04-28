@@ -17,6 +17,7 @@ import {
   tmdbDetail,
   tmdbWatchProvidersTR,
 } from "../_shared/tmdb.ts";
+import { needsHydration, hydrateAliases } from "../_shared/alias-cache.ts";
 import {
   loadProviders,
   matchTmdbProvider,

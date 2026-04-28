@@ -1,0 +1,1 @@
+DELETE FROM public.content_availability_history WHERE region = 'TR-TEST-AUDIT';

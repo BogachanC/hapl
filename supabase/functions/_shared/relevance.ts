@@ -47,23 +47,32 @@ export function scoreCandidate(query: string, r: RawTmdbResult): number {
   // Exact normalized match → strong
   if (title === q || orig === q) return 1.0;
 
-  // Single-token query (e.g. "friends") → require it to be the title
-  // OR a title with very few other tokens.
+  // Single-token query (e.g. "friends", "dark", "you") → much stricter.
+  // Only EXACT-title match (1 token) or 2-token title scores high.
+  // Anything longer ("Thomas & Friends") is heavily penalised so it sinks/drops.
   if (qTokens.length === 1) {
     const qTok = qTokens[0];
-    const titleHasOnly = titleTokens.length <= 2 && titleTokens.includes(qTok);
-    const origHasOnly = origTokens.length <= 2 && origTokens.includes(qTok);
-    if (titleHasOnly || origHasOnly) {
-      // Strong but not perfect — 0.85 baseline, popularity bumps it up
+    const titleExact = titleTokens.length === 1 && titleTokens[0] === qTok;
+    const origExact = origTokens.length === 1 && origTokens[0] === qTok;
+    if (titleExact || origExact) {
       const pop = Math.min(0.1, (r.popularity ?? 0) / 1000);
       const votes = Math.min(0.05, (r.vote_count ?? 0) / 10000);
-      return 0.85 + pop + votes;
+      return 0.9 + pop + votes;
     }
-    // Single token appears but title is long ("Thomas & Friends") → low
+    // 2-token title where one is the query (e.g. "Dark Matter") — moderate
+    const titleTwo = titleTokens.length === 2 && titleTokens.includes(qTok);
+    const origTwo = origTokens.length === 2 && origTokens.includes(qTok);
+    if (titleTwo || origTwo) {
+      const pop = Math.min(0.05, (r.popularity ?? 0) / 2000);
+      return 0.55 + pop;
+    }
+    // Token appears but title is long → very low (Thomas & Friends, Best Friends Whenever…)
     if (titleTokens.includes(qTok) || origTokens.includes(qTok)) {
-      return 0.35;
+      // Penalty grows with extra tokens
+      const extra = Math.max(titleTokens.length, origTokens.length) - 1;
+      return Math.max(0.05, 0.3 - extra * 0.05);
     }
-    return 0.1;
+    return 0.05;
   }
 
   // Multi-token query — combine signals

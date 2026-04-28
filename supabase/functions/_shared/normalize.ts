@@ -34,30 +34,42 @@ export function tokenSetSimilarity(a: string, b: string): number {
   return inter / union;
 }
 
-// Levenshtein-lite ratio (0..1)
+// Levenshtein distance
+function levenshtein(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  // prev row = edit distance from a[0..0] (empty) to b[0..j]
+  let prev = new Array(n + 1);
+  let curr = new Array(n + 1);
+  for (let j = 0; j <= n; j++) prev[j] = j;
+  for (let i = 1; i <= m; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(
+        prev[j] + 1,        // deletion
+        curr[j - 1] + 1,    // insertion
+        prev[j - 1] + cost, // substitution
+      );
+    }
+    [prev, curr] = [curr, prev];
+  }
+  return prev[n];
+}
+
+// Normalized similarity (0..1) based on Levenshtein distance
 export function similarityRatio(a: string, b: string): number {
   const x = normalizeTitle(a);
   const y = normalizeTitle(b);
+  if (!x && !y) return 1;
   if (!x || !y) return 0;
   if (x === y) return 1;
-  const longer = x.length >= y.length ? x : y;
-  const shorter = x.length >= y.length ? y : x;
-  if (longer.length === 0) return 1;
-  // Cheap distance
-  const dp = new Array(shorter.length + 1).fill(0).map((_, i) => i);
-  for (let i = 1; i <= longer.length; i++) {
-    let prev = i;
-    for (let j = 1; j <= shorter.length; j++) {
-      const tmp = dp[j];
-      dp[j] = longer[i - 1] === shorter[j - 1]
-        ? dp[j - 1]
-        : 1 + Math.min(dp[j - 1], dp[j], prev);
-      prev = tmp;
-    }
-    dp[0] = i;
-  }
-  const dist = dp[shorter.length];
-  return 1 - dist / longer.length;
+  const maxLen = Math.max(x.length, y.length);
+  if (maxLen === 0) return 1;
+  const dist = levenshtein(x, y);
+  return 1 - dist / maxLen;
 }
 
 export function cacheKey(query: string): string {

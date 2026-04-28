@@ -99,3 +99,73 @@ export function tmdbImage(path: string | null, size = "w500"): string | null {
   if (!path) return null;
   return `https://image.tmdb.org/t/p/${size}${path}`;
 }
+
+// ─── Alias sources ────────────────────────────────────────────────────────
+// Two TMDB endpoints contribute multilingual title aliases:
+//   • /{type}/{id}/alternative_titles  → region-tagged AKAs (US, TR, etc.)
+//   • /{type}/{id}/translations         → per-language localized titles
+// We only consume TR + US (alt_titles) and tr-TR + en-US (translations) to
+// keep noise low and stay Türkiye-focused.
+
+export interface TmdbAliasRaw {
+  alias: string;
+  source: "tmdb_alt_title" | "tmdb_translation";
+  language: string | null;
+  country: string | null;
+}
+
+const ALLOWED_ALT_COUNTRIES = new Set(["TR", "US"]);
+const ALLOWED_TRANSLATION_LANGS = new Set(["tr", "en"]);
+
+export async function tmdbAlternativeTitles(
+  type: "movie" | "tv",
+  id: number,
+): Promise<TmdbAliasRaw[]> {
+  const url = `${TMDB_BASE}/${type}/${id}/alternative_titles?api_key=${getKey()}`;
+  const res = await fetch(url);
+  if (!res.ok) return [];
+  const data = await res.json();
+  // movie endpoint: { titles: [...] }, tv endpoint: { results: [...] }
+  const list: any[] = data.titles || data.results || [];
+  const out: TmdbAliasRaw[] = [];
+  for (const item of list) {
+    const country: string | null = item.iso_3166_1 || null;
+    if (!country || !ALLOWED_ALT_COUNTRIES.has(country)) continue;
+    const title: string = (item.title || "").trim();
+    if (!title) continue;
+    out.push({
+      alias: title,
+      source: "tmdb_alt_title",
+      language: null,
+      country,
+    });
+  }
+  return out;
+}
+
+export async function tmdbTranslations(
+  type: "movie" | "tv",
+  id: number,
+): Promise<TmdbAliasRaw[]> {
+  const url = `${TMDB_BASE}/${type}/${id}/translations?api_key=${getKey()}`;
+  const res = await fetch(url);
+  if (!res.ok) return [];
+  const data = await res.json();
+  const list: any[] = data.translations || [];
+  const out: TmdbAliasRaw[] = [];
+  for (const item of list) {
+    const lang: string | null = item.iso_639_1 || null;
+    if (!lang || !ALLOWED_TRANSLATION_LANGS.has(lang)) continue;
+    const country: string | null = item.iso_3166_1 || null;
+    const dataField = item.data || {};
+    const title: string = (dataField.title || dataField.name || "").trim();
+    if (!title) continue;
+    out.push({
+      alias: title,
+      source: "tmdb_translation",
+      language: lang,
+      country,
+    });
+  }
+  return out;
+}

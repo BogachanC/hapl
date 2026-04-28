@@ -174,7 +174,17 @@ async function refreshOne(
     }).eq("id", r.id);
   }
 
-  return { ok: true, provider_count: rows.length, flipped: toExpire.length };
+  // Opportunistic alias backfill — only when stale (TTL-gated). Soft-fails.
+  // Bounded by the cron batch size, so TMDB call rate stays predictable:
+  // each refreshed title triggers at most 2 extra TMDB calls (alt + trans).
+  let aliases_added = 0;
+  try {
+    if (await needsHydration(sb, row.tmdb_id, row.tmdb_type)) {
+      aliases_added = await hydrateAliases(sb, row.tmdb_id, row.tmdb_type, detail);
+    }
+  } catch (_) { /* swallow */ }
+
+  return { ok: true, provider_count: rows.length, flipped: toExpire.length, aliases_added };
 }
 
 serve(async (req) => {

@@ -12,6 +12,11 @@ import {
 import { firecrawlSearchText } from "../_shared/firecrawl.ts";
 import { getAliases } from "../_shared/aliases.ts";
 import {
+  getAliasExpansions,
+  needsHydration,
+  hydrateAliases,
+} from "../_shared/alias-cache.ts";
+import {
   loadProviders,
   matchTmdbProvider,
   extractProvidersFromText,

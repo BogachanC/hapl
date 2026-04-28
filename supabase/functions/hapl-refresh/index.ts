@@ -34,6 +34,22 @@ const DEFAULT_BATCH = 25;
 const MAX_BATCH = 100;
 const AVAILABILITY_FRESH_HOURS = 24 * 7; // mirror search-content semantics
 
+// Deterministic TMDB confidence mapping by availability_type.
+// Keep small + explicit; no schema change, no audit, no behavior change elsewhere.
+//   stream  (flatrate) → 0.92  (strongest signal: included in subscription)
+//   free / ads          → 0.88  (free-with-ads / free tier)
+//   rent / buy          → 0.86  (transactional, weaker "available on platform" signal)
+function tmdbConfidenceFor(availType: string): number {
+  switch (availType) {
+    case "stream": return 0.92;
+    case "free":
+    case "ads":    return 0.88;
+    case "rent":
+    case "buy":    return 0.86;
+    default:       return 0.85;
+  }
+}
+
 function deriveContentKind(
   mediaType: "movie" | "tv",
   genres: { id: number; name: string }[],
@@ -96,7 +112,7 @@ async function refreshOne(
       rows.push({
         provider_id: match.id,
         availability_type: availType,
-        confidence: 0.9,
+        confidence: tmdbConfidenceFor(availType),
         source_url: watch.link,
       });
     }

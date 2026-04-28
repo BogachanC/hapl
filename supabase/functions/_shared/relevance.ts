@@ -93,25 +93,15 @@ export function scoreCandidate(query: string, r: RawTmdbResult): number {
   // Subset bonus: if every query token is contained in the title (or original),
   // it's a clear match (e.g. "Stranger Things" ⊂ "Stranger Things 2"). This protects
   // legitimate long-form titles when token order/extras differ.
-  // VOTE-AWARE: low-vote subset siblings (e.g. obscure 2013 "Stranger Things" movie)
-  // do NOT receive the subset bonus — otherwise they free-ride on the exact title's
-  // popularity into the visible result band.
   const titleSet = new Set(titleTokens);
   const origSet = new Set(origTokens);
   const subsetOfTitle = qTokens.every((t) => titleSet.has(t));
   const subsetOfOrig = qTokens.every((t) => origSet.has(t));
-  const isSubset = subsetOfTitle || subsetOfOrig;
-  const votesN = r.vote_count ?? 0;
-  const subsetBonus = isSubset ? (votesN >= 200 ? 0.1 : 0) : 0;
+  const subsetBonus = subsetOfTitle || subsetOfOrig ? 0.1 : 0;
 
-  // Tiny / zero-vote multi-token siblings: dampen even if jaccard is decent
-  // (e.g. "Stranger Things" 2013 movie with 71 votes shouldn't sit alongside the show).
-  // Stronger damp for proper subset-style siblings (qTokens fully inside a longer
-  // title) — these are the ones that benefit most from a popular sibling's name.
-  const lengthDelta = Math.max(titleTokens.length, origTokens.length) - qTokens.length;
-  const weakDamp = votesN < 100
-    ? (isSubset && lengthDelta >= 1 ? 0.7 : 0.85)
-    : 1.0;
+  // Tiny / zero-vote multi-token siblings: dampen even if jaccard is decent.
+  const votesN = r.vote_count ?? 0;
+  const weakDamp = votesN < 100 ? 0.85 : 1.0;
 
   const pop = Math.min(0.05, (r.popularity ?? 0) / 1000);
   const votes = Math.min(0.05, votesN / 10000);

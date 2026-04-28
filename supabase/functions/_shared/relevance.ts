@@ -59,9 +59,10 @@ export function scoreCandidate(query: string, r: RawTmdbResult): number {
       const votes = Math.min(0.05, (r.vote_count ?? 0) / 10000);
       return 0.9 + pop + votes;
     }
-    // 2-token title where one is the query (e.g. "Dark Matter", "Thomas & Friends")
-    // — moderate-low. Must NOT compete with the exact match.
-    // Vote-aware: weak/obscure 2-token siblings (vote_count < 200) lose their boost.
+    // 2-token title where one is the query (e.g. "Dark Matter", "Thomas & Friends",
+    // "Şrek 2", "Shrek 2") — moderate. Must NOT compete with the exact match.
+    // Vote-aware bands so genuinely popular sequels (e.g. "Şrek 2", 13K votes)
+    // clear the short-query floor (0.5), while obscure same-shape titles do not.
     const titleTwo = titleTokens.length === 2 && titleTokens.includes(qTok);
     const origTwo = origTokens.length === 2 && origTokens.includes(qTok);
     if (titleTwo || origTwo) {
@@ -70,9 +71,14 @@ export function scoreCandidate(query: string, r: RawTmdbResult): number {
         // weak sibling — collapses to long-title penalty band
         return Math.max(0.08, 0.25 + Math.min(0.05, votesN / 4000));
       }
+      // Popular established sibling (e.g. "Şrek 2" 13K, "Star Trek 2" etc.):
+      // lift base so it survives the short-query floor. Cap stays well below
+      // the exact-match band (0.9) so the canonical title still ranks first.
+      const isPopularSibling = votesN >= 1000;
+      const base = isPopularSibling ? 0.55 : 0.4;
       const pop = Math.min(0.05, (r.popularity ?? 0) / 2000);
-      const voteB = Math.min(0.05, votesN / 10000);
-      return 0.4 + pop + voteB;
+      const voteB = Math.min(0.1, votesN / 8000);
+      return Math.min(0.78, base + pop + voteB);
     }
     // Leading-token match: query is the FIRST meaningful token of the title.
     // Examples we want to lift here:

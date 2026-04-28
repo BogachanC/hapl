@@ -276,6 +276,7 @@ serve(async (req) => {
       processed,
       failed,
       flipped: totalFlipped,
+      aliases_added: totalAliases,
       details,
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

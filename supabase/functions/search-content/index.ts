@@ -30,8 +30,7 @@ const MAX_ENRICH = 5;
 // (complete missing firecrawl_enabled providers TMDB didn't return).
 const FIRECRAWL_MIN_SCORE = 0.7;
 // How long an availability row stays "fresh" before considered stale
-// TEMP: 0 for stale-flip live test. Restore to 24*7 after verification.
-const AVAILABILITY_FRESH_HOURS = 0;
+const AVAILABILITY_FRESH_HOURS = 24 * 7;
 
 interface PlatformOut {
   id?: number;

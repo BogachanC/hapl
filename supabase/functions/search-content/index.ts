@@ -78,6 +78,23 @@ async function writeToCache(sb: any, key: string, results: ContentResultOut[]) {
 }
 
 // ─── DB persistence (best-effort, won't block response) ───────────────────
+// Map TMDB media_type + genres → our content_kind enum-ish value
+// Schema expects: movie | series | documentary | reality
+function deriveContentKind(
+  mediaType: "movie" | "tv",
+  genres: { id: number; name: string }[],
+): string {
+  const gnames = (genres || []).map((g) => (g.name || "").toLowerCase());
+  const isDoc = gnames.some((g) => g.includes("belgesel") || g.includes("documentary"));
+  const isReality =
+    gnames.some((g) => g.includes("reality") || g.includes("realite")) ||
+    gnames.some((g) => g.includes("yarışma") || g.includes("yarisma"));
+  if (isDoc) return "documentary";
+  if (mediaType === "tv" && isReality) return "reality";
+  if (mediaType === "movie") return "movie";
+  return "series";
+}
+
 async function persistTitle(
   sb: any,
   candidate: { id: number; media_type: "movie" | "tv" },
@@ -96,7 +113,7 @@ async function persistTitle(
       backdrop_path: detail.backdrop_path,
       overview: detail.overview,
       genres: (detail.genres || []).map((g: any) => g.name),
-      content_kind: candidate.media_type,
+      content_kind: deriveContentKind(candidate.media_type, detail.genres || []),
       last_tmdb_sync_at: new Date().toISOString(),
       last_requested_at: new Date().toISOString(),
     };
@@ -116,6 +133,12 @@ async function persistTitle(
   }
 }
 
+/**
+ * Persist availability with stale handling.
+ * - Upserts current findings as status="available"
+ * - Marks previously-available rows that weren't seen this sync as "unavailable"
+ *   (only those checked over AVAILABILITY_FRESH_HOURS ago, to avoid race flips)
+ */
 async function persistAvailability(
   sb: any,
   titleId: string,
@@ -127,24 +150,57 @@ async function persistAvailability(
     source_url: string | null;
   }>,
 ) {
-  if (!titleId || rows.length === 0) return;
+  if (!titleId) return;
+  const now = new Date().toISOString();
   try {
-    await sb.from("content_availability").upsert(
-      rows.map((r) => ({
-        title_id: titleId,
-        provider_id: r.provider_id,
-        region: "TR",
-        availability_type: r.availability_type,
-        status: "available",
-        source: r.source,
-        source_url: r.source_url,
-        confidence: r.confidence,
-        last_seen_at: new Date().toISOString(),
-        checked_at: new Date().toISOString(),
-        raw_payload: {},
-      })),
-      { onConflict: "title_id,provider_id,region,availability_type" },
-    );
+    if (rows.length > 0) {
+      await sb.from("content_availability").upsert(
+        rows.map((r) => ({
+          title_id: titleId,
+          provider_id: r.provider_id,
+          region: "TR",
+          availability_type: r.availability_type,
+          status: "available",
+          source: r.source,
+          source_url: r.source_url,
+          confidence: r.confidence,
+          last_seen_at: now,
+          checked_at: now,
+          raw_payload: {},
+        })),
+        { onConflict: "title_id,provider_id,region,availability_type" },
+      );
+    }
+
+    // Stale handling: existing rows for this title NOT in the current set →
+    // mark unavailable (but only if their previous check was old enough).
+    const seenKeys = new Set(rows.map((r) => `${r.provider_id}:${r.availability_type}`));
+    const staleCutoff = new Date(Date.now() - AVAILABILITY_FRESH_HOURS * 3600 * 1000).toISOString();
+    const { data: existing } = await sb
+      .from("content_availability")
+      .select("id, provider_id, availability_type, status, checked_at")
+      .eq("title_id", titleId)
+      .eq("region", "TR");
+
+    const toExpire = (existing || []).filter((row: any) => {
+      const key = `${row.provider_id}:${row.availability_type}`;
+      if (seenKeys.has(key)) return false;
+      if (row.status !== "available") return false;
+      // Only flip if it was last checked before the freshness window
+      return !row.checked_at || row.checked_at < staleCutoff;
+    });
+
+    for (const r of toExpire) {
+      await sb
+        .from("content_availability")
+        .update({
+          status: "unavailable",
+          checked_at: now,
+          expires_at: now,
+          confidence: 0.3,
+        })
+        .eq("id", r.id);
+    }
   } catch (err) {
     console.error("persistAvailability exception:", err);
   }

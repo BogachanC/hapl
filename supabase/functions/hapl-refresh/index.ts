@@ -70,12 +70,12 @@ async function refreshOne(
   sb: any,
   row: { id: string; tmdb_id: number; tmdb_type: "movie" | "tv"; title: string },
   providers: ProviderRow[],
-): Promise<{ ok: boolean; provider_count: number; flipped: number }> {
+): Promise<{ ok: boolean; provider_count: number; flipped: number; aliases_added: number }> {
   const [detail, watch] = await Promise.all([
     tmdbDetail(row.tmdb_type, row.tmdb_id),
     tmdbWatchProvidersTR(row.tmdb_type, row.tmdb_id),
   ]);
-  if (!detail) return { ok: false, provider_count: 0, flipped: 0 };
+  if (!detail) return { ok: false, provider_count: 0, flipped: 0, aliases_added: 0 };
 
   const now = new Date().toISOString();
 

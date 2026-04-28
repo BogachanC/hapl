@@ -25,7 +25,12 @@ const corsHeaders = {
 
 const CACHE_TTL_SECONDS = 24 * 60 * 60;
 const MAX_ENRICH = 5;
+// Firecrawl is invoked when title match is strong enough.
+// Used both as fallback (TMDB=0 providers) and as gap-filler
+// (complete missing firecrawl_enabled providers TMDB didn't return).
 const FIRECRAWL_MIN_SCORE = 0.7;
+// How long an availability row stays "fresh" before considered stale
+const AVAILABILITY_FRESH_HOURS = 24 * 7;
 
 interface PlatformOut {
   id?: number;

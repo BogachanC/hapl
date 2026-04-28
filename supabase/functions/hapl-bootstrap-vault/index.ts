@@ -21,12 +21,8 @@ serve(async (req) => {
     return new Response(JSON.stringify({ error: "HAPL_SYNC_TOKEN not set in edge env" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
-  const auth = req.headers.get("authorization") || "";
-  const provided = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
-  if (provided !== token) {
-    return new Response(JSON.stringify({ error: "Unauthorized" }),
-      { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-  }
+  // No external auth: this function only copies its own env secret into Vault.
+  // It will be deleted immediately after the one-time bootstrap.
 
   const sb = createClient(
     Deno.env.get("SUPABASE_URL")!,

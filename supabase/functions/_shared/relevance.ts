@@ -95,6 +95,8 @@ export function scoreCandidate(query: string, r: RawTmdbResult): number {
  * - Sorts by score desc
  */
 export function rankTmdbResults(query: string, raw: any[]): ScoredCandidate[] {
+  const qTokens = tokenize(query);
+  const isShortQuery = qTokens.length === 1;
   const out: ScoredCandidate[] = [];
   for (const r of raw) {
     if (r.media_type !== "movie" && r.media_type !== "tv") continue;
@@ -102,8 +104,9 @@ export function rankTmdbResults(query: string, raw: any[]): ScoredCandidate[] {
     const original = r.original_title || r.original_name || "";
     if (!title) continue;
     const score = scoreCandidate(query, r);
-    if (score < 0.3) continue; // drop noise
-    // Extra guard: zero-vote junk (only keep if very high name match)
+    // Stricter floor for single-token queries (Friends, Dark, You)
+    const floor = isShortQuery ? 0.5 : 0.3;
+    if (score < floor) continue;
     if ((r.vote_count ?? 0) === 0 && score < 0.85) continue;
 
     const date = r.release_date || r.first_air_date || "";

@@ -14,6 +14,75 @@ export type Database = {
   }
   public: {
     Tables: {
+      content_availability: {
+        Row: {
+          availability_type: string
+          checked_at: string
+          confidence: number
+          created_at: string
+          expires_at: string | null
+          id: string
+          last_seen_at: string | null
+          provider_id: string
+          raw_payload: Json
+          region: string
+          source: string
+          source_url: string | null
+          status: string
+          title_id: string
+          updated_at: string
+        }
+        Insert: {
+          availability_type?: string
+          checked_at?: string
+          confidence?: number
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          last_seen_at?: string | null
+          provider_id: string
+          raw_payload?: Json
+          region?: string
+          source: string
+          source_url?: string | null
+          status: string
+          title_id: string
+          updated_at?: string
+        }
+        Update: {
+          availability_type?: string
+          checked_at?: string
+          confidence?: number
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          last_seen_at?: string | null
+          provider_id?: string
+          raw_payload?: Json
+          region?: string
+          source?: string
+          source_url?: string | null
+          status?: string
+          title_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "content_availability_provider_id_fkey"
+            columns: ["provider_id"]
+            isOneToOne: false
+            referencedRelation: "streaming_providers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "content_availability_title_id_fkey"
+            columns: ["title_id"]
+            isOneToOne: false
+            referencedRelation: "content_titles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       content_platforms: {
         Row: {
           content_id: string
@@ -49,6 +118,75 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      content_titles: {
+        Row: {
+          backdrop_path: string | null
+          content_kind: string | null
+          created_at: string
+          first_release_date: string | null
+          genres: string[]
+          id: string
+          last_full_sync_at: string | null
+          last_requested_at: string | null
+          last_tmdb_sync_at: string | null
+          metadata: Json
+          normalized_title: string | null
+          original_title: string | null
+          overview: string | null
+          poster_path: string | null
+          release_year: number | null
+          search_aliases: string[]
+          title: string
+          tmdb_id: number
+          tmdb_type: string
+          updated_at: string
+        }
+        Insert: {
+          backdrop_path?: string | null
+          content_kind?: string | null
+          created_at?: string
+          first_release_date?: string | null
+          genres?: string[]
+          id?: string
+          last_full_sync_at?: string | null
+          last_requested_at?: string | null
+          last_tmdb_sync_at?: string | null
+          metadata?: Json
+          normalized_title?: string | null
+          original_title?: string | null
+          overview?: string | null
+          poster_path?: string | null
+          release_year?: number | null
+          search_aliases?: string[]
+          title: string
+          tmdb_id: number
+          tmdb_type: string
+          updated_at?: string
+        }
+        Update: {
+          backdrop_path?: string | null
+          content_kind?: string | null
+          created_at?: string
+          first_release_date?: string | null
+          genres?: string[]
+          id?: string
+          last_full_sync_at?: string | null
+          last_requested_at?: string | null
+          last_tmdb_sync_at?: string | null
+          metadata?: Json
+          normalized_title?: string | null
+          original_title?: string | null
+          overview?: string | null
+          poster_path?: string | null
+          release_year?: number | null
+          search_aliases?: string[]
+          title?: string
+          tmdb_id?: number
+          tmdb_type?: string
+          updated_at?: string
+        }
+        Relationships: []
       }
       contents: {
         Row: {
@@ -106,6 +244,60 @@ export type Database = {
           },
         ]
       }
+      manual_availability_overrides: {
+        Row: {
+          action: string
+          created_at: string
+          effective_from: string
+          effective_until: string | null
+          id: string
+          note: string | null
+          provider_id: string
+          source_url: string | null
+          title_id: string
+          updated_at: string
+        }
+        Insert: {
+          action: string
+          created_at?: string
+          effective_from?: string
+          effective_until?: string | null
+          id?: string
+          note?: string | null
+          provider_id: string
+          source_url?: string | null
+          title_id: string
+          updated_at?: string
+        }
+        Update: {
+          action?: string
+          created_at?: string
+          effective_from?: string
+          effective_until?: string | null
+          id?: string
+          note?: string | null
+          provider_id?: string
+          source_url?: string | null
+          title_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "manual_availability_overrides_provider_id_fkey"
+            columns: ["provider_id"]
+            isOneToOne: false
+            referencedRelation: "streaming_providers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "manual_availability_overrides_title_id_fkey"
+            columns: ["title_id"]
+            isOneToOne: false
+            referencedRelation: "content_titles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       platforms: {
         Row: {
           color: string
@@ -154,12 +346,55 @@ export type Database = {
         }
         Relationships: []
       }
+      streaming_providers: {
+        Row: {
+          created_at: string
+          display_name: string
+          domains: string[]
+          firecrawl_enabled: boolean
+          firecrawl_priority: number
+          id: string
+          is_active: boolean
+          slug: string
+          sort_order: number
+          tmdb_names: string[]
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          display_name: string
+          domains?: string[]
+          firecrawl_enabled?: boolean
+          firecrawl_priority?: number
+          id?: string
+          is_active?: boolean
+          slug: string
+          sort_order?: number
+          tmdb_names?: string[]
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          display_name?: string
+          domains?: string[]
+          firecrawl_enabled?: boolean
+          firecrawl_priority?: number
+          id?: string
+          is_active?: boolean
+          slug?: string
+          sort_order?: number
+          tmdb_names?: string[]
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      show_limit: { Args: never; Returns: number }
+      show_trgm: { Args: { "": string }; Returns: string[] }
     }
     Enums: {
       content_origin: "yerli" | "yabanci"

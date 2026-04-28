@@ -267,9 +267,10 @@ async function enrichCandidate(
   const firecrawlEligible = providers.filter(
     (p) => p.firecrawl_enabled && !seen.has(p.slug),
   );
-  // Skip firecrawl on low-popularity duplicate titles to avoid pasting
-  // mainstream-title web results onto obscure same-name items.
-  const popularEnough = (cand.vote_count ?? 0) >= 50 || cand.score >= 0.95;
+  // Skip firecrawl on low-popularity duplicate titles. Even when the
+  // normalized title is an exact match (score ≥ 0.9), an obscure same-name
+  // entry with very few votes shouldn't inherit mainstream search results.
+  const popularEnough = (cand.vote_count ?? 0) >= 50;
   const shouldRunFirecrawl =
     cand.score >= FIRECRAWL_MIN_SCORE &&
     popularEnough &&

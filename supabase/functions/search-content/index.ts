@@ -346,6 +346,35 @@ async function enrichCandidate(
   };
 }
 
+// ─── merge helpers (multilingual fallback) ───────────────────────────────
+function mergeRawById(a: any[], b: any[]): any[] {
+  const seen = new Set<string>();
+  const out: any[] = [];
+  for (const r of [...a, ...b]) {
+    const k = `${r.media_type}:${r.id}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(r);
+  }
+  return out;
+}
+
+function mergeRanked(
+  primary: ReturnType<typeof rankTmdbResults>,
+  alias: ReturnType<typeof rankTmdbResults>,
+): ReturnType<typeof rankTmdbResults> {
+  const seen = new Set<string>();
+  const out: typeof primary = [];
+  // Alias-driven hits go first (they're the better-language match)
+  for (const r of [...alias, ...primary]) {
+    const k = `${r.media_type}:${r.id}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(r);
+  }
+  return out.sort((x, y) => y.score - x.score);
+}
+
 // ─── handler ──────────────────────────────────────────────────────────────
 serve(async (req) => {
   if (req.method === "OPTIONS") {

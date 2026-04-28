@@ -6,7 +6,9 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import Index from "./pages/Index.tsx";
 import ContentDetail from "./pages/ContentDetail.tsx";
 import AdminPanel from "./pages/AdminPanel.tsx";
+import Auth from "./pages/Auth.tsx";
 import NotFound from "./pages/NotFound.tsx";
+import ProtectedAdminRoute from "./components/ProtectedAdminRoute.tsx";
 
 const queryClient = new QueryClient();
 
@@ -19,7 +21,15 @@ const App = () => (
         <Routes>
           <Route path="/" element={<Index />} />
           <Route path="/content/:id" element={<ContentDetail />} />
-          <Route path="/admin" element={<AdminPanel />} />
+          <Route path="/auth" element={<Auth />} />
+          <Route
+            path="/admin"
+            element={
+              <ProtectedAdminRoute>
+                <AdminPanel />
+              </ProtectedAdminRoute>
+            }
+          />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>
@@ -29,3 +39,4 @@ const App = () => (
 );
 
 export default App;
+

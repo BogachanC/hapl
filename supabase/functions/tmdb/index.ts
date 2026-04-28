@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.4";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -16,17 +17,64 @@ async function tmdbFetch(path: string, apiKey: string) {
   return res.json();
 }
 
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+/**
+ * Auth gate: requires a valid Supabase JWT AND an `admin` role in
+ * public.user_roles. Returns null on success, or a Response on failure.
+ */
+async function requireAdmin(req: Request): Promise<Response | null> {
+  const authHeader = req.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    return jsonResponse({ error: "Unauthorized" }, 401);
+  }
+
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+  if (!supabaseUrl || !anonKey) {
+    return jsonResponse({ error: "Server misconfigured" }, 500);
+  }
+
+  const supabase = createClient(supabaseUrl, anonKey, {
+    global: { headers: { Authorization: authHeader } },
+  });
+
+  const token = authHeader.replace("Bearer ", "");
+  const { data: claimsData, error: claimsErr } = await supabase.auth.getClaims(token);
+  if (claimsErr || !claimsData?.claims?.sub) {
+    return jsonResponse({ error: "Unauthorized" }, 401);
+  }
+
+  const userId = claimsData.claims.sub as string;
+  const { data: isAdmin, error: roleErr } = await supabase.rpc("has_role", {
+    _user_id: userId,
+    _role: "admin",
+  });
+
+  if (roleErr || !isAdmin) {
+    return jsonResponse({ error: "Forbidden: admin role required" }, 403);
+  }
+
+  return null;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
+  // Admin-only endpoint
+  const authFail = await requireAdmin(req);
+  if (authFail) return authFail;
+
   const apiKey = Deno.env.get("TMDB_API_TOKEN");
   if (!apiKey) {
-    return new Response(JSON.stringify({ error: "TMDB_API_TOKEN not configured" }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return jsonResponse({ error: "TMDB_API_TOKEN not configured" }, 500);
   }
 
   try {

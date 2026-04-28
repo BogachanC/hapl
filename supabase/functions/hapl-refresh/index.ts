@@ -112,7 +112,7 @@ async function refreshOne(
       rows.push({
         provider_id: match.id,
         availability_type: availType,
-        confidence: 0.9,
+        confidence: tmdbConfidenceFor(availType),
         source_url: watch.link,
       });
     }

@@ -320,6 +320,21 @@ async function enrichCandidate(
     },
   ).catch(() => {});
 
+  // ── Lazy alias hydration (fire-and-forget, throttled by needsHydration) ─
+  // Only the top-ranked candidate per query triggers hydration to bound
+  // TMDB calls per search. Stale-or-missing check uses 30d TTL.
+  if (cand.score >= 0.7) {
+    needsHydration(sb, cand.id, cand.media_type)
+      .then((stale) => {
+        if (stale) return hydrateAliases(sb, cand.id, cand.media_type, detail);
+        return 0;
+      })
+      .then((n) => {
+        if (n > 0) console.log(`[alias-cache] hydrated id=${cand.id} type=${cand.media_type} rows=${n}`);
+      })
+      .catch(() => {});
+  }
+
   // ── Confidence: blend TMDB strength + relevance score ───────────────────
   // Calibration:
   //  • TMDB hit on a popular title (vote_count ≥ 100): strong base 0.85

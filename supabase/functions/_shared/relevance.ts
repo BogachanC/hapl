@@ -74,6 +74,23 @@ export function scoreCandidate(query: string, r: RawTmdbResult): number {
       const voteB = Math.min(0.05, votesN / 10000);
       return 0.4 + pop + voteB;
     }
+    // Leading-token match: query is the FIRST meaningful token of the title.
+    // Examples we want to lift here:
+    //   "Behzat" → "Behzat Ç. Bir Ankara Polisiyesi"
+    //   "Behzat" → "Çekiç ve Gül: Bir Behzat Ç. Hikayesi" (title leads with Çekiç,
+    //              but original/Turkish lead might differ — handled by includes branch)
+    // Guard against pollution (e.g. "Friends" → "Friends with Benefits"):
+    // require a meaningful vote_count so only established titles get the lift.
+    const titleLeads = titleTokens.length > 0 && titleTokens[0] === qTok;
+    const origLeads = origTokens.length > 0 && origTokens[0] === qTok;
+    const votesL = r.vote_count ?? 0;
+    if ((titleLeads || origLeads) && votesL >= 200) {
+      // Lift to a band that survives the 0.5 floor and clears the firecrawl
+      // gate (0.7) for popular titles, but stays below exact-match (0.9).
+      const pop = Math.min(0.05, (r.popularity ?? 0) / 2000);
+      const voteB = Math.min(0.1, votesL / 4000);
+      return Math.min(0.85, 0.6 + pop + voteB);
+    }
     // Token appears but title is long → very low (Thomas & Friends, Best Friends Whenever…)
     if (titleTokens.includes(qTok) || origTokens.includes(qTok)) {
       // Penalty grows with extra tokens (slightly steeper than before)

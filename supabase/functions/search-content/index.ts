@@ -260,14 +260,25 @@ async function enrichCandidate(
   pushFromTmdb(watch.rent, "rent", "rent");
   pushFromTmdb(watch.buy, "rent", "buy");
 
-  // ── Firecrawl fallback (only if TMDB empty AND strong name match) ───────
+  // ── Firecrawl: fallback + gap-filler ────────────────────────────────────
+  // Runs when title match is strong AND there is at least one
+  // firecrawl_enabled provider that TMDB did NOT already report for this title.
   let usedFirecrawl = false;
-  if (platforms.length === 0 && cand.score >= FIRECRAWL_MIN_SCORE) {
+  const firecrawlEligible = providers.filter(
+    (p) => p.firecrawl_enabled && !seen.has(p.slug),
+  );
+  const shouldRunFirecrawl =
+    cand.score >= FIRECRAWL_MIN_SCORE &&
+    firecrawlEligible.length > 0 &&
+    (platforms.length === 0 || firecrawlEligible.length >= 1);
+
+  if (shouldRunFirecrawl) {
     const text = await firecrawlSearchText(detail.title, cand.release_year);
     if (text) {
       usedFirecrawl = true;
-      const fcProviders = extractProvidersFromText(text, providers);
-      for (const p of fcProviders) {
+      // Only consider providers TMDB didn't already supply
+      const fcResults = extractProvidersFromText(text, firecrawlEligible, detail.title);
+      for (const { provider: p, confidence } of fcResults) {
         if (seen.has(p.slug)) continue;
         seen.add(p.slug);
         platforms.push({
@@ -281,10 +292,14 @@ async function enrichCandidate(
           provider_id: p.id,
           source: "firecrawl",
           availability_type: "stream",
-          confidence: 0.4,
+          confidence,
           source_url: null,
         });
       }
+      console.log(
+        `[hapl] firecrawl gap-fill: title="${detail.title}" added=${fcResults.length} ` +
+        `tmdb_count=${platforms.length - fcResults.length}`,
+      );
     }
   }
 

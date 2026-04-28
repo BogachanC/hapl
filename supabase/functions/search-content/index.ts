@@ -1,129 +1,60 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
+import { cacheKey, normalizeTitle } from "../_shared/normalize.ts";
+import { rankTmdbResults } from "../_shared/relevance.ts";
+import {
+  tmdbMultiSearch,
+  tmdbDetail,
+  tmdbWatchProvidersTR,
+  tmdbImage,
+} from "../_shared/tmdb.ts";
+import { firecrawlSearchText } from "../_shared/firecrawl.ts";
+import {
+  loadProviders,
+  matchTmdbProvider,
+  extractProvidersFromText,
+  type ProviderRow,
+} from "../_shared/providers.ts";
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const TMDB_BASE = "https://api.themoviedb.org/3";
-const CACHE_TTL_SECONDS = 24 * 60 * 60; // 24 hours
+const CACHE_TTL_SECONDS = 24 * 60 * 60;
+const MAX_ENRICH = 5;
+const FIRECRAWL_MIN_SCORE = 0.7;
 
-// ─── JustWatch provider ID → platform name ──────────────────────────────────
-const JW_PROVIDER_MAP: Record<number, string> = {
-  8: "Netflix",
-  9: "Amazon Prime",
-  337: "Disney+",
-  384: "BluTV",
-  356: "EXXEN",
-  119: "TV+",
-  11: "MUBI",
-  123: "Puhu",
-  456: "Gain",
-  789: "Bein Connect",
-  321: "HBO Max",
-  654: "TOD TV",
-  987: "D-Smart Go",
-  111: "Tabii",
-};
-
-// ─── TMDB provider ID → platform name ───────────────────────────────────────
-const TMDB_PROVIDER_MAP: Record<number, string> = {
-  8: "Netflix",
-  337: "Disney+",
-  119: "Amazon Prime",
-  341: "BluTV",
-  1899: "BluTV",
-  567: "Gain",
-  618: "MUBI",
-  350: "TV+",
-  384: "HBO Max",
-  1796: "EXXEN",
-  542: "Bein Connect",
-  1870: "Puhu",
-  2077: "Tabii",
-  1898: "TOD TV",
-  1871: "TV+",
-  188: "YouTube Premium",
-};
-
-// ─── Platform logo URLs ─────────────────────────────────────────────────────
-const PLATFORM_LOGOS: Record<string, string> = {
-  "Netflix": "https://image.tmdb.org/t/p/original/t2yyOv40HZeVlLjYsCsPHnWLk4W.jpg",
-  "Disney+": "https://image.tmdb.org/t/p/original/7rwgEs15tFwyR9NPQ5vpzxTj19d.jpg",
-  "Amazon Prime": "https://image.tmdb.org/t/p/original/68MNrwlkpF7WnmNPXLah69CR5xh.jpg",
-  "BluTV": "https://image.tmdb.org/t/p/original/rPkEoRMcFSmfMGdDTOdvXtqKQeq.jpg",
-  "Gain": "https://image.tmdb.org/t/p/original/3niqKGngFAGGbRpSHer3LogovPa.jpg",
-  "MUBI": "https://image.tmdb.org/t/p/original/bVR4Z1LCHY7gidXAJF5pMa4QrDS.jpg",
-  "YouTube Premium": "https://image.tmdb.org/t/p/original/6c84bF7glqZXagXWbYL9gBhiMH.jpg",
-  "TV+": "https://image.tmdb.org/t/p/original/6uhKBfmtzFqOcLousHwZuzcrScK.jpg",
-  "HBO Max": "https://image.tmdb.org/t/p/original/Ajqyt5aNxNx9pi1zs5o1dpAKnHo.jpg",
-  "EXXEN": "https://image.tmdb.org/t/p/original/6Q3YKUNA2GGksPxVybiqcJFo0KB.jpg",
-  "Bein Connect": "https://image.tmdb.org/t/p/original/bYEv5OGel1V0DJFmYJ44bCgkAy1.jpg",
-  "Puhu": "https://image.tmdb.org/t/p/original/lPSQb4u6KYJc7G2SurMKvr6WLIx.jpg",
-  "Tabii": "https://image.tmdb.org/t/p/original/k0Pjmg0JaZfJnjT2gM9dNKo5VWb.jpg",
-  "TOD TV": "https://image.tmdb.org/t/p/original/eNE4BpYcUbGKpAe5kXfPCLDjg3P.jpg",
-  "D-Smart Go": "https://image.tmdb.org/t/p/original/hDma0zYCTGzqQSbYj2GvOiUmMJw.jpg",
-};
-
-// ─── Extract platforms from text (Firecrawl fallback) ───────────────────────
-function extractPlatforms(text: string): string[] {
-  const platforms: string[] = [];
-  const t = text || "";
-  if (t.includes("Netflix")) platforms.push("Netflix");
-  if (t.includes("Amazon")) platforms.push("Amazon Prime");
-  if (t.includes("Gain")) platforms.push("Gain");
-  if (t.includes("Puhu") || t.includes("puhu")) platforms.push("Puhu");
-  if (t.includes("MUBI") || t.includes("Mubi")) platforms.push("MUBI");
-  if (t.includes("Apple TV") || t.includes("TV+")) platforms.push("TV+");
-  if (t.includes("EXXEN") || t.includes("Exxen") || t.includes("exxen")) platforms.push("EXXEN");
-  if (t.includes("Tabii") || t.includes("tabii")) platforms.push("Tabii");
-  if (t.includes("Bein Connect") || t.includes("beIN") || t.includes("bein")) platforms.push("Bein Connect");
-  if (t.includes("HBO Max") || t.includes("HBO")) platforms.push("HBO Max");
-  if (t.includes("Disney")) platforms.push("Disney+");
-  if (t.includes("TOD TV") || t.includes("TOD")) platforms.push("TOD TV");
-  if (t.includes("D-Smart") || t.includes("DSmart")) platforms.push("D-Smart Go");
-  if (t.includes("BluTV") || t.includes("Blu TV") || t.includes("blutv")) platforms.push("BluTV");
-  return [...new Set(platforms)];
+interface PlatformOut {
+  id?: number;
+  name: string;
+  logo: string | null;
+  type: "subscription" | "rent" | "free";
+  link: string | null;
+  source?: "tmdb" | "firecrawl";
 }
 
-// ─── AI Validation ──────────────────────────────────────────────────────────
-const SOURCE_WEIGHTS: Record<string, number> = {
-  tmdb: 0.5,
-  justwatch: 0.8,
-  firecrawl: 0.3,
-};
-
-function validatePlatforms(sources: Record<string, string[]>): string[] {
-  const scores: Record<string, number> = {};
-  for (const [source, platforms] of Object.entries(sources)) {
-    const weight = SOURCE_WEIGHTS[source] || 0.2;
-    for (const p of platforms) {
-      if (!scores[p]) scores[p] = 0;
-      scores[p] += weight;
-    }
-  }
-  return Object.entries(scores)
-    .filter(([_, score]) => score >= 0.3)
-    .sort((a, b) => b[1] - a[1])
-    .map(([platform]) => platform);
+interface ContentResultOut {
+  id: number;
+  type: "movie" | "tv";
+  title: string;
+  year: number | null;
+  overview: string;
+  poster: string | null;
+  backdrop: string | null;
+  imdb_rating: number | null;
+  vote_count: number;
+  genres: string[];
+  platforms: PlatformOut[];
+  tmdb_url: string;
+  available_in_tr: boolean;
+  confidence: number;
 }
 
-function getConfidenceScore(sources: Record<string, string[]>): number {
-  const total =
-    sources.justwatch.length * 0.8 +
-    sources.tmdb.length * 0.5 +
-    sources.firecrawl.length * 0.3;
-  return Math.min(100, Math.round(total * 100));
-}
-
-// ─── Cache helpers ──────────────────────────────────────────────────────────
-function getCacheKey(query: string): string {
-  return `hapl:${query.toLowerCase().trim()}`;
-}
-
-async function getFromCache(sb: any, key: string): Promise<any | null> {
+// ─── cache helpers ────────────────────────────────────────────────────────
+async function getFromCache(sb: any, key: string): Promise<ContentResultOut[] | null> {
   const cutoff = new Date(Date.now() - CACHE_TTL_SECONDS * 1000).toISOString();
   const { data } = await sb
     .from("search_cache")
@@ -134,216 +65,258 @@ async function getFromCache(sb: any, key: string): Promise<any | null> {
   return data?.results || null;
 }
 
-async function writeToCache(sb: any, key: string, results: any): Promise<void> {
-  // Upsert: aynı key varsa güncelle
+async function writeToCache(sb: any, key: string, results: ContentResultOut[]) {
   await sb.from("search_cache").upsert(
     { cache_key: key, results, created_at: new Date().toISOString() },
-    { onConflict: "cache_key" }
+    { onConflict: "cache_key" },
   );
 }
 
-// ─── Main handler ───────────────────────────────────────────────────────────
+// ─── DB persistence (best-effort, won't block response) ───────────────────
+async function persistTitle(
+  sb: any,
+  candidate: { id: number; media_type: "movie" | "tv" },
+  detail: any,
+): Promise<string | null> {
+  try {
+    const row = {
+      tmdb_id: candidate.id,
+      tmdb_type: candidate.media_type,
+      title: detail.title,
+      original_title: detail.original_title || null,
+      normalized_title: normalizeTitle(detail.title),
+      release_year: detail.release_date ? new Date(detail.release_date).getFullYear() : null,
+      first_release_date: detail.release_date || null,
+      poster_path: detail.poster_path,
+      backdrop_path: detail.backdrop_path,
+      overview: detail.overview,
+      genres: (detail.genres || []).map((g: any) => g.name),
+      content_kind: candidate.media_type,
+      last_tmdb_sync_at: new Date().toISOString(),
+      last_requested_at: new Date().toISOString(),
+    };
+    const { data, error } = await sb
+      .from("content_titles")
+      .upsert(row, { onConflict: "tmdb_id,tmdb_type" })
+      .select("id")
+      .maybeSingle();
+    if (error) {
+      console.error("persistTitle error:", error.message);
+      return null;
+    }
+    return data?.id || null;
+  } catch (err) {
+    console.error("persistTitle exception:", err);
+    return null;
+  }
+}
+
+async function persistAvailability(
+  sb: any,
+  titleId: string,
+  rows: Array<{
+    provider_id: string;
+    source: "tmdb" | "firecrawl";
+    availability_type: string;
+    confidence: number;
+    source_url: string | null;
+  }>,
+) {
+  if (!titleId || rows.length === 0) return;
+  try {
+    await sb.from("content_availability").upsert(
+      rows.map((r) => ({
+        title_id: titleId,
+        provider_id: r.provider_id,
+        region: "TR",
+        availability_type: r.availability_type,
+        status: "available",
+        source: r.source,
+        source_url: r.source_url,
+        confidence: r.confidence,
+        last_seen_at: new Date().toISOString(),
+        checked_at: new Date().toISOString(),
+        raw_payload: {},
+      })),
+      { onConflict: "title_id,provider_id,region,availability_type" },
+    );
+  } catch (err) {
+    console.error("persistAvailability exception:", err);
+  }
+}
+
+// ─── per-candidate enrichment ─────────────────────────────────────────────
+async function enrichCandidate(
+  sb: any,
+  query: string,
+  cand: ReturnType<typeof rankTmdbResults>[number],
+  providers: ProviderRow[],
+): Promise<ContentResultOut | null> {
+  const [detail, watch] = await Promise.all([
+    tmdbDetail(cand.media_type, cand.id),
+    tmdbWatchProvidersTR(cand.media_type, cand.id),
+  ]);
+  if (!detail) return null;
+
+  // ── TMDB → mapped platforms ─────────────────────────────────────────────
+  const seen = new Set<string>();
+  const platforms: PlatformOut[] = [];
+  const availabilityRows: Array<{
+    provider_id: string; source: "tmdb" | "firecrawl";
+    availability_type: string; confidence: number; source_url: string | null;
+  }> = [];
+
+  const pushFromTmdb = (
+    list: any[],
+    type: "subscription" | "rent" | "free",
+    availType: string,
+  ) => {
+    for (const p of list) {
+      const match = matchTmdbProvider(p.provider_name, providers);
+      if (!match) continue;
+      if (seen.has(match.slug)) continue;
+      seen.add(match.slug);
+      platforms.push({
+        id: p.provider_id,
+        name: match.display_name,
+        logo: tmdbImage(p.logo_path, "original"),
+        type,
+        link: watch.link,
+        source: "tmdb",
+      });
+      availabilityRows.push({
+        provider_id: match.id,
+        source: "tmdb",
+        availability_type: availType,
+        confidence: 0.9,
+        source_url: watch.link,
+      });
+    }
+  };
+  pushFromTmdb(watch.flatrate, "subscription", "stream");
+  pushFromTmdb(watch.free, "free", "free");
+  pushFromTmdb(watch.ads, "free", "ads");
+  pushFromTmdb(watch.rent, "rent", "rent");
+  pushFromTmdb(watch.buy, "rent", "buy");
+
+  // ── Firecrawl fallback (only if TMDB empty AND strong name match) ───────
+  let usedFirecrawl = false;
+  if (platforms.length === 0 && cand.score >= FIRECRAWL_MIN_SCORE) {
+    const text = await firecrawlSearchText(detail.title, cand.release_year);
+    if (text) {
+      usedFirecrawl = true;
+      const fcProviders = extractProvidersFromText(text, providers);
+      for (const p of fcProviders) {
+        if (seen.has(p.slug)) continue;
+        seen.add(p.slug);
+        platforms.push({
+          name: p.display_name,
+          logo: null,
+          type: "subscription",
+          link: null,
+          source: "firecrawl",
+        });
+        availabilityRows.push({
+          provider_id: p.id,
+          source: "firecrawl",
+          availability_type: "stream",
+          confidence: 0.4,
+          source_url: null,
+        });
+      }
+    }
+  }
+
+  // ── Persist (fire-and-forget) ───────────────────────────────────────────
+  persistTitle(sb, { id: cand.id, media_type: cand.media_type }, detail).then(
+    (titleId) => {
+      if (titleId) persistAvailability(sb, titleId, availabilityRows);
+    },
+  ).catch(() => {});
+
+  // ── Confidence: blend TMDB strength + relevance score ───────────────────
+  const tmdbHit = platforms.some((p) => p.source === "tmdb");
+  const base = tmdbHit ? 0.85 : usedFirecrawl ? 0.45 : 0;
+  const confidence = Math.round(Math.min(1, base + cand.score * 0.15) * 100);
+
+  return {
+    id: cand.id,
+    type: cand.media_type,
+    title: detail.title,
+    year: cand.release_year,
+    overview: detail.overview,
+    poster: tmdbImage(detail.poster_path, "w500"),
+    backdrop: tmdbImage(detail.backdrop_path, "w780"),
+    imdb_rating: detail.vote_average ? Math.round(detail.vote_average * 10) / 10 : null,
+    vote_count: detail.vote_count,
+    genres: (detail.genres || []).map((g: any) => g.name),
+    platforms,
+    tmdb_url: `https://www.themoviedb.org/${cand.media_type}/${cand.id}`,
+    available_in_tr: platforms.length > 0,
+    confidence,
+  };
+}
+
+// ─── handler ──────────────────────────────────────────────────────────────
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  const TMDB_API_KEY = Deno.env.get("TMDB_API_TOKEN");
-  const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY");
-  const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
-  const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-
-  if (!TMDB_API_KEY) {
-    return new Response(JSON.stringify({ error: "TMDB_API_TOKEN not configured" }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-
-  const sb = createClient(SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!);
+  const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+  const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const sb = createClient(SUPABASE_URL, SERVICE_KEY);
 
   try {
     const { query } = await req.json();
-    if (!query) throw new Error("query parametresi zorunlu");
+    if (!query || typeof query !== "string" || !query.trim()) {
+      return new Response(JSON.stringify({ error: "query parametresi zorunlu" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
-    // ─── 1. Cache kontrol ─────────────────────────────────────────────────
-    const cacheKey = getCacheKey(query);
-    const cached = await getFromCache(sb, cacheKey);
+    const key = cacheKey(query);
+
+    // 1. Cache
+    const cached = await getFromCache(sb, key);
     if (cached) {
-      console.log(`Cache hit: ${cacheKey}`);
+      console.log(`[hapl] cache hit: ${key}`);
       return new Response(JSON.stringify({ results: cached, cached: true }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // ─── 2. TMDB multi search ─────────────────────────────────────────────
-    const searchRes = await fetch(
-      `${TMDB_BASE}/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}&language=tr-TR&region=TR`,
-    );
-    const searchData = await searchRes.json();
-    const results = (searchData.results || []).filter(
-      (r: any) => r.media_type === "movie" || r.media_type === "tv",
-    );
+    // 2. TMDB multi-search + rank
+    const raw = await tmdbMultiSearch(query.trim());
+    const ranked = rankTmdbResults(query, raw);
+    console.log(`[hapl] query="${query}" tmdb_raw=${raw.length} ranked=${ranked.length}`);
 
-    if (results.length === 0) {
+    if (ranked.length === 0) {
       return new Response(JSON.stringify({ results: [] }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // ─── 3. Enrich top 5 ──────────────────────────────────────────────────
+    // 3. Load providers, enrich top N
+    const providers = await loadProviders(sb);
+    const top = ranked.slice(0, MAX_ENRICH);
     const enriched = await Promise.all(
-      results.slice(0, 5).map(async (item: any) => {
-        const type = item.media_type;
-        const id = item.id;
-
-        const [detailRes, providerRes] = await Promise.all([
-          fetch(`${TMDB_BASE}/${type}/${id}?api_key=${TMDB_API_KEY}&language=tr-TR`),
-          fetch(`${TMDB_BASE}/${type}/${id}/watch/providers?api_key=${TMDB_API_KEY}`),
-        ]);
-
-        const detail = await detailRes.json();
-        const providerData = await providerRes.json();
-        const trProviders = providerData.results?.TR || {};
-        const title = detail.title || detail.name || item.title || item.name || query;
-
-        // ─── Source: TMDB ─────────────────────────────────────────────────
-        const tmdbPlatformNames: string[] = [];
-        for (const p of (trProviders.flatrate || [])) {
-          const name = TMDB_PROVIDER_MAP[p.provider_id];
-          if (name) tmdbPlatformNames.push(name);
-        }
-        for (const p of (trProviders.rent || [])) {
-          const name = TMDB_PROVIDER_MAP[p.provider_id];
-          if (name) tmdbPlatformNames.push(name);
-        }
-        for (const p of (trProviders.free || [])) {
-          const name = TMDB_PROVIDER_MAP[p.provider_id];
-          if (name) tmdbPlatformNames.push(name);
-        }
-
-        // ─── Source: JustWatch ────────────────────────────────────────────
-        const jwPlatformNames: string[] = [];
-        try {
-          const jwRes = await fetch("https://apis.justwatch.com/content/titles/tr_TR/popular", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              query: title,
-              page_size: 1,
-              page: 1,
-              content_types: type === "movie" ? ["movie"] : ["show"],
-            }),
-          });
-          const jwData = await jwRes.json();
-          if (jwData.items && jwData.items.length > 0) {
-            const offers = jwData.items[0].offers || [];
-            const seen = new Set<string>();
-            for (const o of offers) {
-              if (o.monetization_type === "flatrate") {
-                const name = JW_PROVIDER_MAP[o.provider_id];
-                if (name && !seen.has(name)) {
-                  seen.add(name);
-                  jwPlatformNames.push(name);
-                }
-              }
-            }
-          }
-        } catch (err) {
-          console.error("JustWatch hatası:", err);
-        }
-
-        // ─── Source: Firecrawl (smart fallback: < 3 platform) ─────────────
-        const fcPlatformNames: string[] = [];
-        const knownCount = new Set([...tmdbPlatformNames, ...jwPlatformNames]).size;
-        if (knownCount < 3 && FIRECRAWL_API_KEY) {
-          try {
-            const fcRes = await fetch("https://api.firecrawl.dev/v1/search", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${FIRECRAWL_API_KEY}`,
-              },
-              body: JSON.stringify({
-                query: `${title} Türkiye hangi platformda`,
-                limit: 3,
-              }),
-            });
-            const fcData = await fcRes.json();
-            for (const result of fcData.data || []) {
-              const text = result.markdown || result.description || "";
-              const found = extractPlatforms(text);
-              // Firecrawl'dan sadece bilinmeyen platformları ekle
-              for (const p of found) {
-                if (!tmdbPlatformNames.includes(p) && !jwPlatformNames.includes(p)) {
-                  fcPlatformNames.push(p);
-                }
-              }
-            }
-          } catch (err) {
-            console.error("Firecrawl hatası:", err);
-          }
-        }
-
-        // ─── AI Validation ────────────────────────────────────────────────
-        const sources = {
-          tmdb: [...new Set(tmdbPlatformNames)],
-          justwatch: jwPlatformNames,
-          firecrawl: [...new Set(fcPlatformNames)],
-        };
-
-        const validatedNames = validatePlatforms(sources);
-        const confidence = getConfidenceScore(sources);
-
-        const platforms = validatedNames.map((name) => ({
-          name,
-          logo: PLATFORM_LOGOS[name] || null,
-          type: "subscription" as const,
-          link: trProviders.link || null,
-          source: tmdbPlatformNames.includes(name)
-            ? "tmdb"
-            : jwPlatformNames.includes(name)
-            ? "justwatch"
-            : "firecrawl",
-        }));
-
-        const releaseDate = detail.release_date || detail.first_air_date || "";
-        const year = releaseDate ? new Date(releaseDate).getFullYear() : null;
-
-        return {
-          id,
-          type,
-          title,
-          year,
-          overview: detail.overview || "",
-          poster: detail.poster_path ? `https://image.tmdb.org/t/p/w500${detail.poster_path}` : null,
-          backdrop: detail.backdrop_path ? `https://image.tmdb.org/t/p/w780${detail.backdrop_path}` : null,
-          imdb_rating: detail.vote_average ? Math.round(detail.vote_average * 10) / 10 : null,
-          vote_count: detail.vote_count || 0,
-          genres: (detail.genres || []).map((g: any) => g.name),
-          platforms,
-          tmdb_url: `https://www.themoviedb.org/${type}/${id}`,
-          available_in_tr: platforms.length > 0,
-          confidence,
-        };
-      }),
+      top.map((c) => enrichCandidate(sb, query, c, providers)),
     );
+    const results = enriched.filter((r): r is ContentResultOut => r !== null);
 
-    // Only return results with TR platforms
-    const filtered = enriched.filter((r) => r.available_in_tr);
-
-    // ─── 4. Cache'e yaz ───────────────────────────────────────────────────
-    if (filtered.length > 0) {
-      await writeToCache(sb, cacheKey, filtered).catch((err) =>
-        console.error("Cache write error:", err)
-      );
+    // 4. Cache & return (cache only when we have TR-available results)
+    const trAvailable = results.filter((r) => r.available_in_tr);
+    if (trAvailable.length > 0) {
+      writeToCache(sb, key, results).catch((e) => console.error("cache write:", e));
     }
 
-    return new Response(JSON.stringify({ results: filtered, cached: false }), {
+    return new Response(JSON.stringify({ results, cached: false }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (err: any) {
-    console.error(err);
+    console.error("[hapl] error:", err);
     return new Response(JSON.stringify({ error: err.message }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },

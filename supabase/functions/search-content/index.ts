@@ -315,9 +315,17 @@ async function enrichCandidate(
   ).catch(() => {});
 
   // ── Confidence: blend TMDB strength + relevance score ───────────────────
+  // Calibration:
+  //  • TMDB hit on a popular title (vote_count ≥ 100): strong base 0.85
+  //  • TMDB hit on a low-vote title: weaker base 0.65 (don't oversell minor variants)
+  //  • Firecrawl-only:               base 0.40 (clearly tentative)
+  //  • Relevance multiplier dropped from 0.15 → 0.10 to reduce inflation on weak matches
   const tmdbHit = platforms.some((p) => p.source === "tmdb");
-  const base = tmdbHit ? 0.85 : usedFirecrawl ? 0.45 : 0;
-  const confidence = Math.round(Math.min(1, base + cand.score * 0.15) * 100);
+  const popularEnoughForConf = (cand.vote_count ?? 0) >= 100;
+  const base = tmdbHit
+    ? (popularEnoughForConf ? 0.85 : 0.65)
+    : (usedFirecrawl ? 0.40 : 0);
+  const confidence = Math.round(Math.min(1, base + cand.score * 0.10) * 100);
 
   return {
     id: cand.id,

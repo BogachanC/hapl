@@ -61,19 +61,26 @@ export function scoreCandidate(query: string, r: RawTmdbResult): number {
     }
     // 2-token title where one is the query (e.g. "Dark Matter", "Thomas & Friends")
     // — moderate-low. Must NOT compete with the exact match.
+    // Vote-aware: weak/obscure 2-token siblings (vote_count < 200) lose their boost.
     const titleTwo = titleTokens.length === 2 && titleTokens.includes(qTok);
     const origTwo = origTokens.length === 2 && origTokens.includes(qTok);
     if (titleTwo || origTwo) {
+      const votesN = r.vote_count ?? 0;
+      if (votesN < 200) {
+        // weak sibling — collapses to long-title penalty band
+        return Math.max(0.08, 0.25 + Math.min(0.05, votesN / 4000));
+      }
       const pop = Math.min(0.05, (r.popularity ?? 0) / 2000);
-      return 0.4 + pop;
+      const voteB = Math.min(0.05, votesN / 10000);
+      return 0.4 + pop + voteB;
     }
     // Token appears but title is long → very low (Thomas & Friends, Best Friends Whenever…)
     if (titleTokens.includes(qTok) || origTokens.includes(qTok)) {
-      // Penalty grows with extra tokens
+      // Penalty grows with extra tokens (slightly steeper than before)
       const extra = Math.max(titleTokens.length, origTokens.length) - 1;
-      return Math.max(0.05, 0.3 - extra * 0.05);
+      return Math.max(0.04, 0.28 - extra * 0.06);
     }
-    return 0.05;
+    return 0.04;
   }
 
   // Multi-token query — combine signals
@@ -83,9 +90,23 @@ export function scoreCandidate(query: string, r: RawTmdbResult): number {
   const ratO = similarityRatio(q, orig);
   const base = Math.max(jacT, jacO) * 0.6 + Math.max(ratT, ratO) * 0.4;
 
+  // Subset bonus: if every query token is contained in the title (or original),
+  // it's a clear match (e.g. "Stranger Things" ⊂ "Stranger Things 2"). This protects
+  // legitimate long-form titles when token order/extras differ.
+  const titleSet = new Set(titleTokens);
+  const origSet = new Set(origTokens);
+  const subsetOfTitle = qTokens.every((t) => titleSet.has(t));
+  const subsetOfOrig = qTokens.every((t) => origSet.has(t));
+  const subsetBonus = subsetOfTitle || subsetOfOrig ? 0.1 : 0;
+
+  // Tiny / zero-vote multi-token siblings: dampen even if jaccard is decent
+  // (e.g. "Stranger Things" 2013 movie with 71 votes shouldn't sit alongside the show).
+  const votesN = r.vote_count ?? 0;
+  const weakDamp = votesN < 100 ? 0.85 : 1.0;
+
   const pop = Math.min(0.05, (r.popularity ?? 0) / 1000);
-  const votes = Math.min(0.05, (r.vote_count ?? 0) / 10000);
-  return Math.min(1, base + pop + votes);
+  const votes = Math.min(0.05, votesN / 10000);
+  return Math.min(1, (base * weakDamp) + subsetBonus + pop + votes);
 }
 
 /**
@@ -98,6 +119,7 @@ export function scoreCandidate(query: string, r: RawTmdbResult): number {
 export function rankTmdbResults(query: string, raw: any[]): ScoredCandidate[] {
   const qTokens = tokenize(query);
   const isShortQuery = qTokens.length === 1;
+  const qNorm = normalizeTitle(query);
   const out: ScoredCandidate[] = [];
   for (const r of raw) {
     if (r.media_type !== "movie" && r.media_type !== "tv") continue;
@@ -109,6 +131,17 @@ export function rankTmdbResults(query: string, raw: any[]): ScoredCandidate[] {
     const floor = isShortQuery ? 0.5 : 0.3;
     if (score < floor) continue;
     if ((r.vote_count ?? 0) === 0 && score < 0.85) continue;
+
+    // Vote-aware sibling pruning for single-token queries:
+    // an "exact title match" entry exists in this same result list →
+    // demand at least 100 votes for any non-exact sibling to remain visible.
+    // Exact-match entries (score ≥ 0.9) are always kept.
+    if (isShortQuery && score < 0.9) {
+      const tNorm = normalizeTitle(title);
+      const oNorm = normalizeTitle(original);
+      const isExactTitle = tNorm === qNorm || oNorm === qNorm;
+      if (!isExactTitle && (r.vote_count ?? 0) < 100) continue;
+    }
 
     const date = r.release_date || r.first_air_date || "";
     out.push({

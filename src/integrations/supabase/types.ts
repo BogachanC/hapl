@@ -394,7 +394,6 @@ export type Database = {
     }
     Functions: {
       get_hapl_sync_token: { Args: never; Returns: string }
-      set_hapl_sync_token: { Args: { p_token: string }; Returns: undefined }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
     }

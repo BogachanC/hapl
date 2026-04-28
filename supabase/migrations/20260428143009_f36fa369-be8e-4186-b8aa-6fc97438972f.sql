@@ -1,0 +1,1 @@
+DROP FUNCTION IF EXISTS public.set_hapl_sync_token(text);

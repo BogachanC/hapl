@@ -10,6 +10,7 @@ import {
   tmdbImage,
 } from "../_shared/tmdb.ts";
 import { firecrawlSearchText } from "../_shared/firecrawl.ts";
+import { getAliases } from "../_shared/aliases.ts";
 import {
   loadProviders,
   matchTmdbProvider,
@@ -345,6 +346,35 @@ async function enrichCandidate(
   };
 }
 
+// ─── merge helpers (multilingual fallback) ───────────────────────────────
+function mergeRawById(a: any[], b: any[]): any[] {
+  const seen = new Set<string>();
+  const out: any[] = [];
+  for (const r of [...a, ...b]) {
+    const k = `${r.media_type}:${r.id}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(r);
+  }
+  return out;
+}
+
+function mergeRanked(
+  primary: ReturnType<typeof rankTmdbResults>,
+  alias: ReturnType<typeof rankTmdbResults>,
+): ReturnType<typeof rankTmdbResults> {
+  const seen = new Set<string>();
+  const out: typeof primary = [];
+  // Alias-driven hits go first (they're the better-language match)
+  for (const r of [...alias, ...primary]) {
+    const k = `${r.media_type}:${r.id}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(r);
+  }
+  return out.sort((x, y) => y.score - x.score);
+}
+
 // ─── handler ──────────────────────────────────────────────────────────────
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -375,10 +405,47 @@ serve(async (req) => {
       });
     }
 
-    // 2. TMDB multi-search + rank
-    const raw = await tmdbMultiSearch(query.trim());
-    const ranked = rankTmdbResults(query, raw);
+    // 2. TMDB multi-search + rank (with multilingual fallback)
+    const raw = await tmdbMultiSearch(query.trim(), "tr-TR");
+    let ranked = rankTmdbResults(query, raw);
+    let fallbackUsed: string[] = [];
     console.log(`[hapl] query="${query}" tmdb_raw=${raw.length} ranked=${ranked.length}`);
+
+    // Fallback trigger: 0 results OR top score weak (<0.7 → no clear strong match)
+    const needsFallback = ranked.length === 0 || (ranked[0]?.score ?? 0) < 0.7;
+
+    if (needsFallback) {
+      // 2a. Generic retry with en-US — TMDB's English index sometimes returns
+      // hits that the tr-TR localized index misses.
+      const rawEn = await tmdbMultiSearch(query.trim(), "en-US");
+      if (rawEn.length > 0) {
+        const merged = mergeRawById(raw, rawEn);
+        const rankedEn = rankTmdbResults(query, merged);
+        if (rankedEn.length > 0 && (rankedEn[0].score >= 0.7 || ranked.length === 0)) {
+          ranked = rankedEn;
+          fallbackUsed.push("en-US");
+        }
+      }
+
+      // 2b. Alias retry — only if still weak. Search each alias and rank against
+      // ITS OWN canonical title (so the alias hit can score highly), then merge.
+      const stillWeak = ranked.length === 0 || (ranked[0]?.score ?? 0) < 0.7;
+      if (stillWeak) {
+        const aliases = getAliases(query.trim());
+        for (const alias of aliases) {
+          const rawAlias = await tmdbMultiSearch(alias, "tr-TR");
+          const rankedAlias = rankTmdbResults(alias, rawAlias);
+          if (rankedAlias.length > 0 && rankedAlias[0].score >= 0.7) {
+            ranked = mergeRanked(ranked, rankedAlias);
+            fallbackUsed.push(`alias:${alias}`);
+            break;
+          }
+        }
+      }
+      if (fallbackUsed.length > 0) {
+        console.log(`[hapl] fallback used: ${fallbackUsed.join(", ")} → ranked=${ranked.length}`);
+      }
+    }
 
     if (ranked.length === 0) {
       return new Response(JSON.stringify({ results: [] }), {

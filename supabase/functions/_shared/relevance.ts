@@ -119,6 +119,7 @@ export function scoreCandidate(query: string, r: RawTmdbResult): number {
 export function rankTmdbResults(query: string, raw: any[]): ScoredCandidate[] {
   const qTokens = tokenize(query);
   const isShortQuery = qTokens.length === 1;
+  const qNorm = normalizeTitle(query);
   const out: ScoredCandidate[] = [];
   for (const r of raw) {
     if (r.media_type !== "movie" && r.media_type !== "tv") continue;
@@ -130,6 +131,17 @@ export function rankTmdbResults(query: string, raw: any[]): ScoredCandidate[] {
     const floor = isShortQuery ? 0.5 : 0.3;
     if (score < floor) continue;
     if ((r.vote_count ?? 0) === 0 && score < 0.85) continue;
+
+    // Vote-aware sibling pruning for single-token queries:
+    // an "exact title match" entry exists in this same result list →
+    // demand at least 100 votes for any non-exact sibling to remain visible.
+    // Exact-match entries (score ≥ 0.9) are always kept.
+    if (isShortQuery && score < 0.9) {
+      const tNorm = normalizeTitle(title);
+      const oNorm = normalizeTitle(original);
+      const isExactTitle = tNorm === qNorm || oNorm === qNorm;
+      if (!isExactTitle && (r.vote_count ?? 0) < 100) continue;
+    }
 
     const date = r.release_date || r.first_air_date || "";
     out.push({

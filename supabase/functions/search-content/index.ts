@@ -313,26 +313,33 @@ async function enrichCandidate(
     }
   }
 
-  // ── Persist (fire-and-forget) ───────────────────────────────────────────
-  persistTitle(sb, { id: cand.id, media_type: cand.media_type }, detail).then(
-    (titleId) => {
-      if (titleId) persistAvailability(sb, titleId, availabilityRows);
-    },
-  ).catch(() => {});
+  // ── Background tasks: survive past the response via EdgeRuntime.waitUntil ─
+  // Without waitUntil, Supabase edge runtime can terminate the isolate as
+  // soon as the response is sent, killing in-flight DB writes.
+  const ert: any = (globalThis as any).EdgeRuntime;
+  const bg = (p: Promise<any>) => {
+    if (ert?.waitUntil) ert.waitUntil(p.catch(() => {}));
+    else p.catch(() => {});
+  };
 
-  // ── Lazy alias hydration (fire-and-forget, throttled by needsHydration) ─
-  // Only the top-ranked candidate per query triggers hydration to bound
-  // TMDB calls per search. Stale-or-missing check uses 30d TTL.
+  // Persist title + availability
+  bg(
+    persistTitle(sb, { id: cand.id, media_type: cand.media_type }, detail).then(
+      (titleId) => titleId ? persistAvailability(sb, titleId, availabilityRows) : null,
+    ),
+  );
+
+  // Lazy alias hydration — top-ranked only, TTL-gated (30d)
   if (cand.score >= 0.7) {
-    needsHydration(sb, cand.id, cand.media_type)
-      .then((stale) => {
-        if (stale) return hydrateAliases(sb, cand.id, cand.media_type, detail);
-        return 0;
-      })
-      .then((n) => {
-        if (n > 0) console.log(`[alias-cache] hydrated id=${cand.id} type=${cand.media_type} rows=${n}`);
-      })
-      .catch(() => {});
+    bg(
+      needsHydration(sb, cand.id, cand.media_type).then((stale) => {
+        if (!stale) return 0;
+        return hydrateAliases(sb, cand.id, cand.media_type, detail).then((n) => {
+          if (n > 0) console.log(`[alias-cache] hydrated id=${cand.id} type=${cand.media_type} rows=${n}`);
+          return n;
+        });
+      }),
+    );
   }
 
   // ── Confidence: blend TMDB strength + relevance score ───────────────────

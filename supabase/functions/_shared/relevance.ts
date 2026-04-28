@@ -161,13 +161,12 @@ export function rankTmdbResults(query: string, raw: any[]): ScoredCandidate[] {
     }
 
     // Multi-token: when a popular dominant sibling exists, prune low-vote
-    // non-exact subset siblings (Stranger Things → Şömine Keyfi/Sene 1985/2013 film).
-    // We only gate when the dominant exists; without it (Karadayı etc.) we keep.
+    // non-dominant siblings — including same-normalized-title duplicates
+    // (e.g. obscure 2013 "Stranger Things" film with 71 votes that share the
+    // exact title with the popular show). The dominant entry itself stays
+    // because it has vote_count ≥ 1000.
     if (!isShortQuery && hasDominantSibling && score < 0.95) {
-      const tNorm = normalizeTitle(title);
-      const oNorm = normalizeTitle(original);
-      const isExactTitle = tNorm === qNorm || oNorm === qNorm;
-      if (!isExactTitle && (r.vote_count ?? 0) < 100) continue;
+      if ((r.vote_count ?? 0) < 100) continue;
     }
 
     const date = r.release_date || r.first_air_date || "";

@@ -1,25 +1,44 @@
-// Multilingual title aliases — small, hand-curated, extensible.
-// Goal: when a user searches in one language and TMDB's tr-TR multi-search
-// returns weak/empty results, we re-query with a known equivalent title.
+// Multilingual title & franchise aliases — small, hand-curated, extensible.
 //
-// Keep this list intentionally small. It is NOT a translation dictionary;
-// it is a fallback safety net for high-value titles where TMDB's localized
-// index misses cross-language hits. Add entries only with strong justification.
+// Two use-cases:
+// 1) Multilingual fallback for high-value cross-language titles where TMDB's
+//    localized index misses hits (e.g. "Money Heist" ↔ "La Casa de Papel").
+// 2) Franchise variant expansion: when a user types one spelling/language,
+//    also probe the equivalent so series films come through (e.g. "Şrek" ↔ "Shrek",
+//    "Buz Devri" ↔ "Ice Age", "Behzat" ↔ "Behzat Ç").
+//
+// This is NOT a translation dictionary. Add entries only with strong justification.
 
 import { normalizeTitle } from "./normalize.ts";
 
-// Each group is a set of equivalent titles across languages.
+// Each group is a set of equivalent titles / franchise spellings.
 // Lookups are bidirectional: any member maps to all the others.
 const ALIAS_GROUPS: string[][] = [
+  // Cross-language full-title aliases
   ["Money Heist", "La Casa de Papel", "La Casa De Papel"],
   ["Spirited Away", "Ruhların Kaçışı", "Sen to Chihiro no Kamikakushi"],
   ["The Office", "Ofis"],
   ["Friends", "Sıkı Dostlar"],
   ["Game of Thrones", "Taht Oyunları"],
   ["Squid Game", "Kalamar Oyunu"],
-  ["Breaking Bad", "Kötü Adamlar"], // weak alias; only used when primary is empty
   ["Dark", "Karanlık"],
   ["The Crown", "Taç"],
+
+  // Franchise / spelling variants — each variant probes a different TMDB index
+  // and surfaces the full series (e.g. Shrek 2, Buz Devri 3...).
+  ["Şrek", "Shrek"],
+  ["Buz Devri", "Ice Age"],
+  ["Behzat", "Behzat Ç"],
+  ["Yüzüklerin Efendisi", "The Lord of the Rings"],
+  ["Hobbit", "The Hobbit"],
+  ["Açlık Oyunları", "The Hunger Games"],
+  ["Karayip Korsanları", "Pirates of the Caribbean"],
+  ["Yıldız Savaşları", "Star Wars"],
+  ["Örümcek Adam", "Spider-Man", "Spiderman"],
+  ["Demir Adam", "Iron Man"],
+  ["Kara Şövalye", "The Dark Knight"],
+  ["Hızlı ve Öfkeli", "Fast and Furious", "The Fast and the Furious"],
+  ["Görevimiz Tehlike", "Mission Impossible", "Mission: Impossible"],
 ];
 
 // Build normalized → array<original alternates> index once.

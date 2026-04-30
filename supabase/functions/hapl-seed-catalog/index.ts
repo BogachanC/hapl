@@ -302,10 +302,12 @@ async function discoverDocumentaries(
     titles_upserted: 0,
     availability_rows: 0,
     aliases_added: 0,
+    aliases_skipped_cached: 0,
   };
   const baseTitles = stats.titles_upserted;
   const baseAvail = stats.availability_rows;
   const baseAlias = stats.aliases_added;
+  const baseAliasSkipped = stats.aliases_skipped_cached;
 
   for (const type of ["movie", "tv"] as const) {
     for (let page = 1; page <= pages; page++) {
@@ -331,6 +333,7 @@ async function discoverDocumentaries(
   local.titles_upserted = stats.titles_upserted - baseTitles;
   local.availability_rows = stats.availability_rows - baseAvail;
   local.aliases_added = stats.aliases_added - baseAlias;
+  local.aliases_skipped_cached = stats.aliases_skipped_cached - baseAliasSkipped;
   return local;
 }
 

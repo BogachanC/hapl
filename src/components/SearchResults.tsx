@@ -114,7 +114,8 @@ function SearchResultCard({ item, index }: { item: ContentResult; index: number 
         {/* Platforms */}
         <div className="flex flex-wrap gap-1">
           {item.platforms.map((p, i) => {
-            const style = getPlatformStyle(p.name);
+            const slug = resolvePlatformSlug(p as any);
+            const style = getPlatformStyle(slug);
             return (
               <div
                 key={i}

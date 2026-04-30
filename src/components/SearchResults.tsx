@@ -2,43 +2,40 @@ import { ContentResult } from '@/hooks/useContentSearch';
 import { Film, Tv, Calendar, Star } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
+import { getPlatformStyle } from '@/lib/platform-colors';
 
-// Map edge function platform names to slug-based styling
-const PLATFORM_SLUG_MAP: Record<string, string> = {
+// Legacy fallback: search-content sometimes returns only `name` for older
+// providers. Map well-known display names → slug so styling still works.
+const PLATFORM_NAME_TO_SLUG: Record<string, string> = {
   'Netflix': 'netflix',
   'Disney+': 'disney-plus',
-  'Amazon Prime': 'prime-video',
+  'Amazon Prime': 'amazon-prime-video',
+  'Amazon Prime Video': 'amazon-prime-video',
   'BluTV': 'blutv',
   'Gain': 'gain',
+  'GAIN': 'gain',
   'Mubi': 'mubi',
+  'MUBI': 'mubi',
   'YouTube Premium': 'youtube-premium',
   'Apple TV+': 'apple-tv',
   'HBO Max': 'hbo-max',
+  'Max': 'max',
   'Exxen': 'exxen',
+  'EXXEN': 'exxen',
   'Puhu TV': 'puhutv',
-  'TOD': 'tod',
+  'PuhuTV': 'puhutv',
+  'puhutv': 'puhutv',
+  'TOD': 'tod-tv',
+  'TOD TV': 'tod-tv',
   'Tabii': 'tabii',
+  'tabii': 'tabii',
+  'TV+': 'tv-plus',
+  'beIN CONNECT': 'bein-connect',
 };
 
-const PLATFORM_STYLES: Record<string, { bg: string; text: string }> = {
-  'netflix': { bg: 'bg-platform-netflix', text: 'text-white' },
-  'exxen': { bg: 'bg-platform-exxen', text: 'text-black' },
-  'gain': { bg: 'bg-platform-gain', text: 'text-black' },
-  'disney-plus': { bg: 'bg-platform-disney', text: 'text-white' },
-  'prime-video': { bg: 'bg-platform-prime', text: 'text-white' },
-  'tod': { bg: 'bg-platform-tod', text: 'text-yellow-400' },
-  'tabii': { bg: 'bg-platform-tabii', text: 'text-green-400' },
-  'mubi': { bg: 'bg-platform-mubi', text: 'text-white' },
-  'hbo-max': { bg: 'bg-platform-hbo', text: 'text-black' },
-  'puhutv': { bg: 'bg-platform-puhutv', text: 'text-black' },
-  'apple-tv': { bg: 'bg-secondary', text: 'text-foreground' },
-  'youtube-premium': { bg: 'bg-red-600/80', text: 'text-white' },
-  'blutv': { bg: 'bg-blue-700/80', text: 'text-white' },
-};
-
-function getPlatformStyle(name: string) {
-  const slug = PLATFORM_SLUG_MAP[name] || name.toLowerCase().replace(/\s+/g, '-');
-  return PLATFORM_STYLES[slug] || { bg: 'bg-primary', text: 'text-primary-foreground' };
+function resolvePlatformSlug(p: { slug?: string; name: string }): string {
+  if (p.slug) return p.slug;
+  return PLATFORM_NAME_TO_SLUG[p.name] || p.name.toLowerCase().replace(/\s+/g, '-');
 }
 
 interface SearchResultsProps {

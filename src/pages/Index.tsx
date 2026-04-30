@@ -1,50 +1,46 @@
-import { useState, useMemo, useRef, useCallback } from 'react';
+import { useState, useMemo } from 'react';
 import haplLogo from '@/assets/hapl-logo.png';
-import { useContents, usePlatforms, PAGE_SIZE, MAX_ITEMS } from '@/hooks/use-contents';
+import { usePlatforms } from '@/hooks/use-contents';
 import { useContentSearch } from '@/hooks/useContentSearch';
+import { useHomeFeed, type FeedCategory } from '@/hooks/useHomeFeed';
 import { SearchBar } from '@/components/SearchBar';
 import { SearchResults } from '@/components/SearchResults';
 import { PlatformFilter } from '@/components/PlatformFilter';
-import { ContentCard } from '@/components/ContentCard';
 import { TypeFilter } from '@/components/TypeFilter';
-import { AdvancedFilter } from '@/components/AdvancedFilter';
 import { Tv, Loader2, Plus, ArrowLeft } from 'lucide-react';
 import { Link } from 'react-router-dom';
+
+// Map legacy TypeFilter values → home-feed category
+function typeToCategory(t: string | undefined): FeedCategory {
+  if (!t) return 'all';
+  if (t === 'dizi') return 'tv';
+  if (t === 'film') return 'movie';
+  if (t === 'belgesel') return 'documentary';
+  return 'all';
+}
 
 const Index = () => {
   const { results: searchResults, loading: searchLoading, hasSearched, query: search, setQuery: setSearch, clear: clearSearch } = useContentSearch();
   const [selectedPlatform, setSelectedPlatform] = useState<string | undefined>();
   const [selectedType, setSelectedType] = useState<string | undefined>();
-  const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
-  const [selectedOrigin, setSelectedOrigin] = useState<string | undefined>();
-  const [selectedStatus, setSelectedStatus] = useState<string | undefined>();
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
   const { data: platforms, isLoading: platformsLoading } = usePlatforms();
-  const { data: allContents, isLoading: contentsLoading } = useContents({
-    platformId: selectedPlatform,
-    contentType: selectedType,
-    origin: selectedOrigin,
-    status: selectedStatus,
-    genres: selectedGenres.length > 0 ? selectedGenres : undefined,
-    limit: MAX_ITEMS,
+
+  // Map selectedPlatform (platforms.id UUID) → streaming_providers.slug
+  const providerSlug = useMemo(() => {
+    if (!selectedPlatform || !platforms) return null;
+    const p = platforms.find((x) => x.id === selectedPlatform);
+    return p?.slug ?? null;
+  }, [selectedPlatform, platforms]);
+
+  const category = typeToCategory(selectedType);
+
+  const { results: feedResults, loading: feedLoading } = useHomeFeed({
+    category,
+    provider: providerSlug,
+    enabled: !hasSearched,
+    limit: 36,
   });
-
-  const isLoading = platformsLoading || contentsLoading;
-  const visibleContents = useMemo(() => (allContents ?? []).slice(0, visibleCount), [allContents, visibleCount]);
-  const hasMore = allContents ? visibleCount < allContents.length : false;
-
-  const observerRef = useRef<IntersectionObserver | null>(null);
-  const loadMoreRef = useCallback((node: HTMLDivElement | null) => {
-    if (observerRef.current) observerRef.current.disconnect();
-    if (!node || !hasMore) return;
-    observerRef.current = new IntersectionObserver((entries) => {
-      if (entries[0].isIntersecting) {
-        setVisibleCount((prev) => Math.min(prev + PAGE_SIZE, MAX_ITEMS));
-      }
-    });
-    observerRef.current.observe(node);
-  }, [hasMore]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -118,36 +114,17 @@ const Index = () => {
           <>
             <TypeFilter selected={selectedType} onSelect={setSelectedType} />
             {platforms && <PlatformFilter platforms={platforms} selected={selectedPlatform} onSelect={setSelectedPlatform} />}
-            <AdvancedFilter
-              selectedGenres={selectedGenres}
-              onGenresChange={setSelectedGenres}
-              selectedOrigin={selectedOrigin}
-              onOriginChange={setSelectedOrigin}
-              selectedStatus={selectedStatus}
-              onStatusChange={setSelectedStatus}
-            />
 
-            {isLoading ? (
+            {(platformsLoading || feedLoading) ? (
               <div className="flex items-center justify-center py-20">
                 <Loader2 className="h-6 w-6 animate-spin text-primary" />
               </div>
-            ) : visibleContents.length > 0 ? (
-              <>
-                <div className="grid grid-cols-3 gap-2.5 pb-4">
-                  {visibleContents.map((content, i) => (
-                    <ContentCard key={content.id} content={content} index={i} />
-                  ))}
-                </div>
-                {hasMore && (
-                  <div ref={loadMoreRef} className="flex items-center justify-center py-4">
-                    <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                  </div>
-                )}
-              </>
+            ) : feedResults.length > 0 ? (
+              <SearchResults results={feedResults} />
             ) : (
               <div className="text-center py-20 space-y-2">
                 <Tv className="h-10 w-10 text-muted-foreground/30 mx-auto" />
-                <p className="text-sm text-muted-foreground">İçerik bulunamadı</p>
+                <p className="text-sm text-muted-foreground">Henüz içerik yok. Yönetici panelinden katalog keşfini başlatabilirsin.</p>
               </div>
             )}
           </>
@@ -158,4 +135,3 @@ const Index = () => {
 };
 
 export default Index;
-

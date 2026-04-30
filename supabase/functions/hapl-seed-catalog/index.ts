@@ -435,6 +435,7 @@ serve(async (req: Request) => {
     titles_skipped_existing_fresh: 0,
     availability_rows: 0,
     aliases_added: 0,
+    aliases_skipped_cached: 0,
     errors: 0,
   };
   const globalSeen = new Set<string>();

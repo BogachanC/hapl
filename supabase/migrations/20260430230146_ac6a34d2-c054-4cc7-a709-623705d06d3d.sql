@@ -1,0 +1,1 @@
+DELETE FROM public.search_cache WHERE cache_key ILIKE '%wire%';

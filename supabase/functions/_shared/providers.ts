@@ -48,6 +48,21 @@ export function matchTmdbProvider(
 // Provider names that are short/ambiguous → require stronger evidence
 const AMBIGUOUS_SLUGS = new Set(["max", "gain", "tv-plus", "tabii", "tod-tv"]);
 
+// TMDB-primary global providers. TMDB watch/providers is the authoritative
+// source for these — if TMDB didn't list them, a free-text Firecrawl mention
+// (e.g. "watch The Wire on Netflix"-style listicle, IMDb sidebar, or stale
+// global "available on …" snippet) is almost always noise. We require
+// domain-level evidence AND co-occurrence with the title to accept a
+// firecrawl-only signal for these slugs. This kills the false-positive
+// pattern that was producing source_url=null, raw_payload={} rows
+// (e.g. The Wire wrongly tagged Netflix + Disney+).
+const TMDB_PRIMARY_SLUGS = new Set([
+  "netflix",
+  "disney-plus",
+  "max",
+  "amazon-prime-video",
+]);
+
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -145,6 +160,15 @@ export function extractProvidersFromText(
       if (!ok) continue;
       conf = Math.max(conf, 0.55);
     }
+
+    // TMDB-primary global providers: TMDB watch/providers is authoritative.
+    // Free-text mentions (Turkish listicles like "the wire izle netflix.com",
+    // mock streaming sites, IMDb-style "available on …" snippets) are not
+    // reliable enough to override TMDB's silence. Skip these slugs entirely
+    // for Firecrawl gap-fill — they're either covered by TMDB or genuinely
+    // not in TR. This eliminated the The Wire false-positive (Netflix +
+    // Disney+) and is the minimum-blast-radius fix.
+    if (TMDB_PRIMARY_SLUGS.has(p.slug)) continue;
 
     // Drop low-confidence noise
     if (conf < 0.5) continue;

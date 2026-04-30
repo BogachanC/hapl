@@ -179,12 +179,29 @@ serve(async (req: Request) => {
     const provById = new Map<string, { id: string; slug: string; display_name: string }>();
     for (const p of provRows || []) provById.set(p.id, p);
 
-    // Also pull display platforms metadata (logo/color) from `platforms` if slug matches
+    // Also pull display platforms metadata (logo/color) from `platforms` if slug matches.
+    // The two tables (`streaming_providers` vs legacy `platforms`) drifted on a few
+    // slugs — bridge them so we don't silently drop titles whose only provider is
+    // amazon-prime-video / max / tod-tv.
+    const SLUG_ALIASES: Record<string, string[]> = {
+      "amazon-prime-video": ["prime-video", "amazon-prime-video"],
+      "max":                ["hbo-max", "max"],
+      "tod-tv":             ["tod", "tod-tv"],
+    };
     const { data: dispRows } = await sb
       .from("platforms")
       .select("id, slug, name, logo_url, color");
     const dispBySlug = new Map<string, { id: string; slug: string; name: string; logo_url: string | null; color: string }>();
     for (const d of dispRows || []) dispBySlug.set(d.slug, d);
+    function resolveDisplay(providerSlug: string) {
+      const direct = dispBySlug.get(providerSlug);
+      if (direct) return direct;
+      for (const alt of SLUG_ALIASES[providerSlug] || []) {
+        const hit = dispBySlug.get(alt);
+        if (hit) return hit;
+      }
+      return undefined;
+    }
 
     // 6) Build feed items + score
     const items: FeedItem[] = [];

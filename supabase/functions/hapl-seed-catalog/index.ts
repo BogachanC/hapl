@@ -1,21 +1,18 @@
 // hapl-seed-catalog: admin-triggered TMDB catalog discovery + seed.
 //
-// Strategy:
-//   - Iterate a curated list of TR streaming providers (TMDB watch_provider_ids)
-//   - For each provider × media_type (movie, tv): fetch N pages of /discover
-//   - Optionally include a documentary pass (genre 99) without provider filter
-//   - For each discovered title:
-//       • tmdbDetail()           → canonical metadata
-//       • tmdbWatchProvidersTR() → real availability (don't trust discover scoping)
-//       • upsert content_titles (with vote_count/popularity in metadata)
-//       • upsert content_availability (only if real TR providers found)
-//       • hydrateAliases() (lazy: only if needsHydration)
+// Resumable / chunked. The caller drives a multi-step run:
+//   1. POST { pages_primary, pages_secondary, pages_docs, vote_floor }
+//      → returns { done, next_cursor, plan_total, processed_jobs, stats, sources }
+//   2. Subsequent calls: POST { cursor: <next_cursor> } (other params ignored
+//      because the plan is encoded in the cursor).
+//   3. Loop until done=true.
 //
-// Auth: requires `Authorization: Bearer <HAPL_SYNC_TOKEN>` (admin-only).
-// Same shape as hapl-refresh — admin UI calls it via supabase.functions.invoke.
+// Each call processes jobs until SOFT_TIME_BUDGET_MS, then returns early
+// with the next cursor so the next call resumes where this one stopped.
 //
-// Idempotent: relies on UNIQUE constraints on content_titles
-// (tmdb_id, tmdb_type) and content_availability (title_id, provider_id, region, availability_type).
+// Idempotent: relies on UNIQUE constraints. Re-running a chunk is safe.
+//
+// Auth: admin JWT (has_role 'admin') OR HAPL_SYNC_TOKEN. Frontend uses JWT only.
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.4";
@@ -40,9 +37,11 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
 };
 
+// Soft time budget per chunk. 150s is the hard edge-runtime idle limit;
+// we return well before that so the response can flush.
+const SOFT_TIME_BUDGET_MS = 75_000;
+
 // ─── Configuration ────────────────────────────────────────────────────────
-// TMDB provider_id mapping for Türkiye region. Stable IDs from /watch/providers.
-// Order matters → priority for the seed loop.
 const TMDB_PROVIDERS_TR: Array<{ slug: string; tmdb_id: number; priority: "primary" | "secondary" }> = [
   { slug: "netflix",            tmdb_id: 8,    priority: "primary" },
   { slug: "amazon-prime-video", tmdb_id: 119,  priority: "primary" },
@@ -52,20 +51,17 @@ const TMDB_PROVIDERS_TR: Array<{ slug: string; tmdb_id: number; priority: "prima
   { slug: "puhutv",             tmdb_id: 341,  priority: "primary" },
   { slug: "tabii",              tmdb_id: 1879, priority: "primary" },
   { slug: "gain",               tmdb_id: 583,  priority: "primary" },
-  // Fragile / spotty TMDB coverage — included but lower priority
   { slug: "tv-plus",            tmdb_id: 1796, priority: "secondary" },
   { slug: "exxen",              tmdb_id: 1837, priority: "secondary" },
   { slug: "tod-tv",             tmdb_id: 2061, priority: "secondary" },
   { slug: "bein-connect",       tmdb_id: 217,  priority: "secondary" },
 ];
 
-// Default scope per run. Overridable via request body.
-const DEFAULT_PAGES_PRIMARY = 1;     // 20 items per page
+const DEFAULT_PAGES_PRIMARY = 1;
 const DEFAULT_PAGES_SECONDARY = 1;
-const DEFAULT_DOC_PAGES = 1;         // documentary pass (genre 99)
-const DEFAULT_VOTE_FLOOR = 20;       // skip ultra-low-signal titles
+const DEFAULT_DOC_PAGES = 1;
+const DEFAULT_VOTE_FLOOR = 20;
 
-// Confidence mirrors hapl-refresh
 function tmdbConfidenceFor(availType: string): number {
   switch (availType) {
     case "stream": return 0.92;
@@ -95,7 +91,6 @@ function deriveContentKind(
 interface SeedStats {
   discovered: number;
   titles_upserted: number;
-  titles_skipped_existing_fresh: number;
   availability_rows: number;
   aliases_added: number;
   aliases_skipped_cached: number;
@@ -111,14 +106,69 @@ interface SourceStats {
   aliases_skipped_cached: number;
 }
 
+// A single unit of work: one TMDB discover page for one (provider|docs, type).
+interface Job {
+  source: string;             // provider slug or "documentary-genre-99"
+  type: "movie" | "tv";
+  page: number;
+  tmdb_provider_id?: number;  // present for provider jobs
+  with_genres?: number[];     // present for doc jobs
+}
+
+interface Cursor {
+  v: 1;
+  jobs: Job[];
+  job_index: number;          // next job to process
+  vote_floor: number;
+  stats: SeedStats;
+  sources: Record<string, SourceStats>;
+}
+
+function buildPlan(
+  pagesPrimary: number,
+  pagesSecondary: number,
+  pagesDocs: number,
+  providersFilter: string[] | null,
+): Job[] {
+  const jobs: Job[] = [];
+  for (const p of TMDB_PROVIDERS_TR) {
+    if (providersFilter && !providersFilter.includes(p.slug)) continue;
+    const pages = p.priority === "primary" ? pagesPrimary : pagesSecondary;
+    for (const type of ["movie", "tv"] as const) {
+      for (let page = 1; page <= pages; page++) {
+        jobs.push({ source: p.slug, type, page, tmdb_provider_id: p.tmdb_id });
+      }
+    }
+  }
+  if (pagesDocs > 0 && !providersFilter) {
+    for (const type of ["movie", "tv"] as const) {
+      for (let page = 1; page <= pagesDocs; page++) {
+        jobs.push({ source: "documentary-genre-99", type, page, with_genres: [99] });
+      }
+    }
+  }
+  return jobs;
+}
+
+function emptySource(name: string): SourceStats {
+  return {
+    source: name,
+    discovered: 0,
+    titles_upserted: 0,
+    availability_rows: 0,
+    aliases_added: 0,
+    aliases_skipped_cached: 0,
+  };
+}
+
 async function processOne(
   sb: any,
   item: TmdbDiscoverItem,
   providers: ProviderRow[],
   stats: SeedStats,
+  src: SourceStats,
 ): Promise<void> {
   try {
-    // 1) Detail + real TR watch providers (don't trust discover provider scoping)
     const [detail, watch] = await Promise.all([
       tmdbDetail(item.media_type, item.id),
       tmdbWatchProvidersTR(item.media_type, item.id),
@@ -163,22 +213,10 @@ async function processOne(
       return;
     }
     stats.titles_upserted++;
+    src.titles_upserted++;
     const titleId = titleData.id;
 
-    // 2) Availability — translate TMDB watch providers → our streaming_providers rows
-    const availRows: Array<{
-      title_id: string;
-      provider_id: string;
-      region: string;
-      availability_type: string;
-      status: string;
-      source: string;
-      confidence: number;
-      checked_at: string;
-      last_seen_at: string;
-      raw_payload: any;
-    }> = [];
-
+    const availRows: any[] = [];
     const buckets: Array<{ type: string; list: any[] }> = [
       { type: "stream", list: watch.flatrate },
       { type: "free",   list: watch.free },
@@ -186,7 +224,6 @@ async function processOne(
       { type: "rent",   list: watch.rent },
       { type: "buy",    list: watch.buy },
     ];
-
     const seenKey = new Set<string>();
     for (const bucket of buckets) {
       for (const wp of bucket.list || []) {
@@ -209,27 +246,26 @@ async function processOne(
         });
       }
     }
-
     if (availRows.length > 0) {
       const { error: availErr } = await sb
         .from("content_availability")
-        .upsert(availRows, {
-          onConflict: "title_id,provider_id,region,availability_type",
-        });
+        .upsert(availRows, { onConflict: "title_id,provider_id,region,availability_type" });
       if (availErr) {
         console.error("[seed] availability upsert failed:", availErr.message);
         stats.errors++;
       } else {
         stats.availability_rows += availRows.length;
+        src.availability_rows += availRows.length;
       }
     }
 
-    // 3) Aliases (lazy: only if stale or missing)
     if (await needsHydration(sb, detail.id, item.media_type)) {
       const added = await hydrateAliases(sb, detail.id, item.media_type, detail);
       stats.aliases_added += added;
+      src.aliases_added += added;
     } else {
       stats.aliases_skipped_cached++;
+      src.aliases_skipped_cached++;
     }
   } catch (err) {
     console.error("[seed] processOne exception:", (err as Error).message);
@@ -237,104 +273,58 @@ async function processOne(
   }
 }
 
-async function discoverProvider(
+async function runJob(
   sb: any,
-  providerSlug: string,
-  tmdbProviderId: number,
-  pages: number,
+  job: Job,
   voteFloor: number,
   providers: ProviderRow[],
-  globalSeen: Set<string>,
   stats: SeedStats,
-): Promise<SourceStats> {
-  const local: SourceStats = {
-    source: providerSlug,
-    discovered: 0,
-    titles_upserted: 0,
-    availability_rows: 0,
-    aliases_added: 0,
-    aliases_skipped_cached: 0,
-  };
-  const baseTitles = stats.titles_upserted;
-  const baseAvail = stats.availability_rows;
-  const baseAlias = stats.aliases_added;
-  const baseAliasSkipped = stats.aliases_skipped_cached;
-
-  for (const type of ["movie", "tv"] as const) {
-    for (let page = 1; page <= pages; page++) {
-      const { results } = await tmdbDiscover({
-        type,
-        page,
-        withWatchProviders: [tmdbProviderId],
-        watchRegion: "TR",
-        voteCountGte: voteFloor,
-        sortBy: "popularity.desc",
-      });
-      for (const item of results) {
-        local.discovered++;
-        stats.discovered++;
-        const k = `${item.media_type}:${item.id}`;
-        if (globalSeen.has(k)) continue;
-        globalSeen.add(k);
-        await processOne(sb, item, providers, stats);
-      }
-    }
+  src: SourceStats,
+): Promise<void> {
+  const { results } = await tmdbDiscover({
+    type: job.type,
+    page: job.page,
+    withWatchProviders: job.tmdb_provider_id ? [job.tmdb_provider_id] : undefined,
+    withGenres: job.with_genres,
+    watchRegion: "TR",
+    voteCountGte: voteFloor,
+    sortBy: "popularity.desc",
+  });
+  for (const item of results) {
+    stats.discovered++;
+    src.discovered++;
+    await processOne(sb, item, providers, stats, src);
   }
-
-  local.titles_upserted = stats.titles_upserted - baseTitles;
-  local.availability_rows = stats.availability_rows - baseAvail;
-  local.aliases_added = stats.aliases_added - baseAlias;
-  local.aliases_skipped_cached = stats.aliases_skipped_cached - baseAliasSkipped;
-  return local;
 }
 
-async function discoverDocumentaries(
-  sb: any,
-  pages: number,
-  voteFloor: number,
-  providers: ProviderRow[],
-  globalSeen: Set<string>,
-  stats: SeedStats,
-): Promise<SourceStats> {
-  const local: SourceStats = {
-    source: "documentary-genre-99",
-    discovered: 0,
-    titles_upserted: 0,
-    availability_rows: 0,
-    aliases_added: 0,
-    aliases_skipped_cached: 0,
-  };
-  const baseTitles = stats.titles_upserted;
-  const baseAvail = stats.availability_rows;
-  const baseAlias = stats.aliases_added;
-  const baseAliasSkipped = stats.aliases_skipped_cached;
+async function authorize(req: Request): Promise<{ ok: boolean; reason: string; status?: number }> {
+  const auth = req.headers.get("authorization") || req.headers.get("Authorization") || "";
+  const bearer = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  const expectedToken = Deno.env.get("HAPL_SYNC_TOKEN");
 
-  for (const type of ["movie", "tv"] as const) {
-    for (let page = 1; page <= pages; page++) {
-      const { results } = await tmdbDiscover({
-        type,
-        page,
-        withGenres: [99],
-        watchRegion: "TR",
-        voteCountGte: voteFloor,
-        sortBy: "popularity.desc",
-      });
-      for (const item of results) {
-        local.discovered++;
-        stats.discovered++;
-        const k = `${item.media_type}:${item.id}`;
-        if (globalSeen.has(k)) continue;
-        globalSeen.add(k);
-        await processOne(sb, item, providers, stats);
-      }
-    }
+  if (expectedToken && bearer === expectedToken) {
+    return { ok: true, reason: "sync-token" };
   }
+  if (!bearer) return { ok: false, reason: "missing-credentials", status: 401 };
 
-  local.titles_upserted = stats.titles_upserted - baseTitles;
-  local.availability_rows = stats.availability_rows - baseAvail;
-  local.aliases_added = stats.aliases_added - baseAlias;
-  local.aliases_skipped_cached = stats.aliases_skipped_cached - baseAliasSkipped;
-  return local;
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+  if (!supabaseUrl || !anonKey) return { ok: false, reason: "server-misconfigured", status: 500 };
+
+  const sbUser = createClient(supabaseUrl, anonKey, {
+    global: { headers: { Authorization: `Bearer ${bearer}` } },
+  });
+  const { data: claimsData, error: claimsErr } = await sbUser.auth.getClaims(bearer);
+  if (claimsErr || !claimsData?.claims?.sub) {
+    return { ok: false, reason: `invalid-jwt:${claimsErr?.message || "no-claims"}`, status: 401 };
+  }
+  const userId = claimsData.claims.sub as string;
+  const { data: isAdmin, error: roleErr } = await sbUser.rpc("has_role", {
+    _user_id: userId, _role: "admin",
+  });
+  if (roleErr) return { ok: false, reason: `role-check-error:${roleErr.message}`, status: 401 };
+  if (!isAdmin) return { ok: false, reason: "not-admin", status: 403 };
+  return { ok: true, reason: "admin-jwt" };
 }
 
 serve(async (req: Request) => {
@@ -342,79 +332,18 @@ serve(async (req: Request) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  // Admin auth — accepts EITHER:
-  //   • Bearer <HAPL_SYNC_TOKEN>           (server/cron/internal only — NEVER frontend)
-  //   • Bearer <user JWT> with admin role  (admin UI path — same model as `tmdb` fn)
-  const auth = req.headers.get("authorization") || req.headers.get("Authorization") || "";
-  const bearer = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-  const expectedToken = Deno.env.get("HAPL_SYNC_TOKEN");
-
-  let authorized = false;
-  let authReason = "missing-credentials";
-
-  if (expectedToken && bearer === expectedToken) {
-    authorized = true;
-    authReason = "sync-token";
-  } else if (bearer) {
-    // Mirror the working `tmdb` function: anon-key client + Authorization
-    // header, getClaims(token), then has_role RPC. This validates the JWT
-    // against Supabase's signing keys correctly.
-    const supabaseUrl = Deno.env.get("SUPABASE_URL");
-    const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
-    if (!supabaseUrl || !anonKey) {
-      return new Response(JSON.stringify({ error: "server misconfigured" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-    const sbUser = createClient(supabaseUrl, anonKey, {
-      global: { headers: { Authorization: `Bearer ${bearer}` } },
-    });
-
-    const { data: claimsData, error: claimsErr } = await sbUser.auth.getClaims(bearer);
-    if (claimsErr || !claimsData?.claims?.sub) {
-      authReason = `invalid-jwt:${claimsErr?.message || "no-claims"}`;
-    } else {
-      const userId = claimsData.claims.sub as string;
-      const { data: isAdmin, error: roleErr } = await sbUser.rpc("has_role", {
-        _user_id: userId,
-        _role: "admin",
-      });
-      if (roleErr) {
-        authReason = `role-check-error:${roleErr.message}`;
-      } else if (!isAdmin) {
-        // Authenticated but not admin → 403
-        return new Response(JSON.stringify({ error: "forbidden: admin role required" }), {
-          status: 403,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      } else {
-        authorized = true;
-        authReason = "admin-jwt";
-      }
-    }
+  const authResult = await authorize(req);
+  if (!authResult.ok) {
+    console.warn("[hapl-seed-catalog] auth failed:", authResult.reason);
+    return new Response(
+      JSON.stringify({ error: authResult.status === 403 ? "forbidden: admin role required" : "unauthorized", reason: authResult.reason }),
+      { status: authResult.status ?? 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
   }
-
-  if (!authorized) {
-    console.warn("[hapl-seed-catalog] auth failed:", authReason);
-    return new Response(JSON.stringify({ error: "unauthorized", reason: authReason }), {
-      status: 401,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-  console.log("[hapl-seed-catalog] authorized via:", authReason);
-
+  console.log("[hapl-seed-catalog] authorized via:", authResult.reason);
 
   let body: any = {};
   try { body = await req.json(); } catch { /* allow empty */ }
-
-  const pagesPrimary = Math.max(0, Math.min(5, body.pages_primary ?? DEFAULT_PAGES_PRIMARY));
-  const pagesSecondary = Math.max(0, Math.min(5, body.pages_secondary ?? DEFAULT_PAGES_SECONDARY));
-  const pagesDocs = Math.max(0, Math.min(5, body.pages_docs ?? DEFAULT_DOC_PAGES));
-  const voteFloor = Math.max(0, body.vote_floor ?? DEFAULT_VOTE_FLOOR);
-  const providersFilter: string[] | null = Array.isArray(body.providers) && body.providers.length > 0
-    ? body.providers
-    : null;
 
   const sb = createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -424,58 +353,68 @@ serve(async (req: Request) => {
   const providers = await loadProviders(sb);
   if (providers.length === 0) {
     return new Response(JSON.stringify({ error: "no providers configured" }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 
-  const stats: SeedStats = {
-    discovered: 0,
-    titles_upserted: 0,
-    titles_skipped_existing_fresh: 0,
-    availability_rows: 0,
-    aliases_added: 0,
-    aliases_skipped_cached: 0,
-    errors: 0,
-  };
-  const globalSeen = new Set<string>();
-  const sources: SourceStats[] = [];
+  // ─── Cursor: either continue an existing run or start a new plan ──────
+  let cursor: Cursor;
+  if (body.cursor && typeof body.cursor === "object" && Array.isArray(body.cursor.jobs)) {
+    cursor = body.cursor as Cursor;
+  } else {
+    const pagesPrimary = Math.max(0, Math.min(10, body.pages_primary ?? DEFAULT_PAGES_PRIMARY));
+    const pagesSecondary = Math.max(0, Math.min(10, body.pages_secondary ?? DEFAULT_PAGES_SECONDARY));
+    const pagesDocs = Math.max(0, Math.min(10, body.pages_docs ?? DEFAULT_DOC_PAGES));
+    const voteFloor = Math.max(0, body.vote_floor ?? DEFAULT_VOTE_FLOOR);
+    const providersFilter: string[] | null = Array.isArray(body.providers) && body.providers.length > 0
+      ? body.providers : null;
+    const jobs = buildPlan(pagesPrimary, pagesSecondary, pagesDocs, providersFilter);
+    cursor = {
+      v: 1,
+      jobs,
+      job_index: 0,
+      vote_floor: voteFloor,
+      stats: {
+        discovered: 0, titles_upserted: 0, availability_rows: 0,
+        aliases_added: 0, aliases_skipped_cached: 0, errors: 0,
+      },
+      sources: {},
+    };
+  }
 
   const t0 = Date.now();
+  const planTotal = cursor.jobs.length;
+  const startIndex = cursor.job_index;
+  let jobsDoneThisChunk = 0;
 
-  for (const p of TMDB_PROVIDERS_TR) {
-    if (providersFilter && !providersFilter.includes(p.slug)) continue;
-    const pages = p.priority === "primary" ? pagesPrimary : pagesSecondary;
-    if (pages <= 0) continue;
+  while (cursor.job_index < cursor.jobs.length) {
+    if (Date.now() - t0 > SOFT_TIME_BUDGET_MS) break;
+    const job = cursor.jobs[cursor.job_index];
+    if (!cursor.sources[job.source]) cursor.sources[job.source] = emptySource(job.source);
     try {
-      const s = await discoverProvider(
-        sb, p.slug, p.tmdb_id, pages, voteFloor, providers, globalSeen, stats,
-      );
-      sources.push(s);
+      await runJob(sb, job, cursor.vote_floor, providers, cursor.stats, cursor.sources[job.source]);
     } catch (err) {
-      console.error(`[seed] provider ${p.slug} failed:`, (err as Error).message);
-      stats.errors++;
+      console.error(`[seed] job ${job.source}/${job.type}/p${job.page} failed:`, (err as Error).message);
+      cursor.stats.errors++;
     }
+    cursor.job_index++;
+    jobsDoneThisChunk++;
   }
 
-  if (pagesDocs > 0 && !providersFilter) {
-    try {
-      const s = await discoverDocumentaries(sb, pagesDocs, voteFloor, providers, globalSeen, stats);
-      sources.push(s);
-    } catch (err) {
-      console.error("[seed] documentaries failed:", (err as Error).message);
-      stats.errors++;
-    }
-  }
-
+  const done = cursor.job_index >= cursor.jobs.length;
   const elapsed_ms = Date.now() - t0;
 
   return new Response(
     JSON.stringify({
       ok: true,
-      params: { pagesPrimary, pagesSecondary, pagesDocs, voteFloor, providersFilter },
-      stats,
-      sources,
+      done,
+      next_cursor: done ? null : cursor,
+      plan_total: planTotal,
+      processed_jobs: cursor.job_index,
+      jobs_done_this_chunk: jobsDoneThisChunk,
+      job_index_start: startIndex,
+      stats: cursor.stats,
+      sources: Object.values(cursor.sources),
       elapsed_ms,
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } },

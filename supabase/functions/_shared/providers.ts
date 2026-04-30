@@ -48,6 +48,21 @@ export function matchTmdbProvider(
 // Provider names that are short/ambiguous → require stronger evidence
 const AMBIGUOUS_SLUGS = new Set(["max", "gain", "tv-plus", "tabii", "tod-tv"]);
 
+// TMDB-primary global providers. TMDB watch/providers is the authoritative
+// source for these — if TMDB didn't list them, a free-text Firecrawl mention
+// (e.g. "watch The Wire on Netflix"-style listicle, IMDb sidebar, or stale
+// global "available on …" snippet) is almost always noise. We require
+// domain-level evidence AND co-occurrence with the title to accept a
+// firecrawl-only signal for these slugs. This kills the false-positive
+// pattern that was producing source_url=null, raw_payload={} rows
+// (e.g. The Wire wrongly tagged Netflix + Disney+).
+const TMDB_PRIMARY_SLUGS = new Set([
+  "netflix",
+  "disney-plus",
+  "max",
+  "amazon-prime-video",
+]);
+
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

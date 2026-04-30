@@ -228,6 +228,8 @@ async function processOne(
     if (await needsHydration(sb, detail.id, item.media_type)) {
       const added = await hydrateAliases(sb, detail.id, item.media_type, detail);
       stats.aliases_added += added;
+    } else {
+      stats.aliases_skipped_cached++;
     }
   } catch (err) {
     console.error("[seed] processOne exception:", (err as Error).message);

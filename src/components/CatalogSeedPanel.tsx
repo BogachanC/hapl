@@ -22,47 +22,77 @@ interface SourceStats {
   aliases_skipped_cached?: number;
 }
 
-interface SeedResponse {
+interface ChunkResponse {
   ok: boolean;
+  done: boolean;
+  next_cursor: any | null;
+  plan_total: number;
+  processed_jobs: number;
+  jobs_done_this_chunk: number;
   stats: SeedStats;
   sources: SourceStats[];
   elapsed_ms: number;
-  params: any;
 }
 
-/**
- * Admin-only catalog seed trigger. Calls hapl-seed-catalog edge function.
- * Two modes:
- *   - Small (~300 items): 1 page per provider + 1 docs page
- *   - Large (~1000 items): 3 pages primary, 2 secondary, 2 docs
- */
+const MAX_CHUNKS = 30; // safety cap
+
 export function CatalogSeedPanel() {
   const [running, setRunning] = useState(false);
-  const [lastResult, setLastResult] = useState<SeedResponse | null>(null);
+  const [lastResult, setLastResult] = useState<ChunkResponse | null>(null);
   const [mode, setMode] = useState<'small' | 'large'>('small');
+  const [progress, setProgress] = useState<{ chunks: number; processed: number; total: number } | null>(null);
+  const [totalElapsedMs, setTotalElapsedMs] = useState(0);
 
   const runSeed = async () => {
     setRunning(true);
     setLastResult(null);
+    setProgress(null);
+    setTotalElapsedMs(0);
+
+    const initialParams = mode === 'small'
+      ? { pages_primary: 1, pages_secondary: 1, pages_docs: 1, vote_floor: 20 }
+      : { pages_primary: 3, pages_secondary: 2, pages_docs: 2, vote_floor: 20 };
+
+    toast.info(
+      mode === 'small'
+        ? 'Küçük seed başlatıldı (~300 içerik). Lütfen 1-2 dakika bekleyin…'
+        : 'Büyük seed başlatıldı (~1000 içerik). Birden fazla chunk halinde çalışacak…'
+    );
+
     try {
-      const params = mode === 'small'
-        ? { pages_primary: 1, pages_secondary: 1, pages_docs: 1, vote_floor: 20 }
-        : { pages_primary: 3, pages_secondary: 2, pages_docs: 2, vote_floor: 20 };
+      let cursor: any = null;
+      let chunkCount = 0;
+      let lastChunk: ChunkResponse | null = null;
+      const t0 = Date.now();
 
-      toast.info(
-        mode === 'small'
-          ? 'Küçük seed başlatıldı (~300 içerik). Lütfen 1-2 dakika bekleyin…'
-          : 'Büyük seed başlatıldı (~1000 içerik). 3-5 dakika sürebilir…'
-      );
+      while (chunkCount < MAX_CHUNKS) {
+        const body = cursor ? { cursor } : initialParams;
+        const { data, error } = await supabase.functions.invoke('hapl-seed-catalog', { body });
+        if (error) throw error;
+        const chunk = data as ChunkResponse;
+        chunkCount++;
+        lastChunk = chunk;
 
-      const { data, error } = await supabase.functions.invoke('hapl-seed-catalog', {
-        body: params,
-      });
-      if (error) throw error;
-      setLastResult(data as SeedResponse);
-      toast.success(
-        `Seed tamamlandı: ${data?.stats?.titles_upserted ?? 0} içerik, ${data?.stats?.availability_rows ?? 0} platform kaydı`
-      );
+        setProgress({
+          chunks: chunkCount,
+          processed: chunk.processed_jobs,
+          total: chunk.plan_total,
+        });
+        setLastResult(chunk);
+        setTotalElapsedMs(Date.now() - t0);
+
+        if (chunk.done) break;
+        cursor = chunk.next_cursor;
+        if (!cursor) break;
+      }
+
+      if (lastChunk?.done) {
+        toast.success(
+          `Seed tamamlandı (${chunkCount} chunk): ${lastChunk.stats.titles_upserted} içerik, ${lastChunk.stats.availability_rows} platform kaydı`
+        );
+      } else {
+        toast.warning(`Seed ${chunkCount} chunk'tan sonra durdu, tamamlanmadı.`);
+      }
     } catch (e: any) {
       toast.error('Seed hatası: ' + (e.message || 'Bilinmeyen hata'));
     } finally {
@@ -78,7 +108,7 @@ export function CatalogSeedPanel() {
       </div>
       <p className="text-xs text-muted-foreground leading-relaxed">
         TMDB'den TR'de izlenebilir içerikleri keşfedip Hapl katalog veritabanına yazar.
-        Ana sayfa feed'i bu veritabanından çalışır.
+        Büyük mod, timeout'tan kaçınmak için chunk'lara bölünür.
       </p>
 
       <div className="flex gap-2">
@@ -105,9 +135,28 @@ export function CatalogSeedPanel() {
         {running ? 'Keşfediliyor…' : 'Katalog Keşfi Başlat'}
       </Button>
 
+      {progress && (
+        <div className="rounded-lg bg-secondary/30 p-3 space-y-1.5 text-xs">
+          <div className="flex justify-between text-muted-foreground">
+            <span>Chunk:</span>
+            <span className="text-foreground font-medium">{progress.chunks}</span>
+          </div>
+          <div className="flex justify-between text-muted-foreground">
+            <span>İş ilerlemesi:</span>
+            <span className="text-foreground font-medium">{progress.processed} / {progress.total}</span>
+          </div>
+          <div className="h-1.5 w-full bg-muted/40 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-primary transition-all"
+              style={{ width: `${progress.total > 0 ? (progress.processed / progress.total) * 100 : 0}%` }}
+            />
+          </div>
+        </div>
+      )}
+
       {lastResult && (
         <div className="rounded-lg bg-secondary/40 p-3 space-y-2 text-xs">
-          <div className="font-bold text-foreground">Sonuç</div>
+          <div className="font-bold text-foreground">{lastResult.done ? 'Sonuç' : 'Ara sonuç'}</div>
           <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-muted-foreground">
             <div>Bulunan:</div>           <div className="text-foreground font-medium">{lastResult.stats.discovered}</div>
             <div>Yazılan içerik:</div>     <div className="text-foreground font-medium">{lastResult.stats.titles_upserted}</div>
@@ -115,7 +164,7 @@ export function CatalogSeedPanel() {
             <div>Alias eklenen:</div>      <div className="text-foreground font-medium">{lastResult.stats.aliases_added}</div>
             <div>Alias cache hit:</div>    <div className="text-foreground font-medium">{lastResult.stats.aliases_skipped_cached ?? 0}</div>
             <div>Hata:</div>               <div className="text-foreground font-medium">{lastResult.stats.errors}</div>
-            <div>Süre:</div>               <div className="text-foreground font-medium">{(lastResult.elapsed_ms / 1000).toFixed(1)}s</div>
+            <div>Toplam süre:</div>        <div className="text-foreground font-medium">{(totalElapsedMs / 1000).toFixed(1)}s</div>
           </div>
           {lastResult.sources?.length > 0 && (
             <>

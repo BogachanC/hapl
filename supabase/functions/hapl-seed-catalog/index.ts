@@ -332,15 +332,19 @@ serve(async (req: Request) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  // Admin auth — accepts EITHER:
-  //   • Bearer <HAPL_SYNC_TOKEN>           (cron / curl path)
-  //   • Bearer <user JWT> with admin role  (admin UI path)
+  // Admin auth — accepts ANY of:
+  //   • Bearer <HAPL_SYNC_TOKEN>            (cron / curl path)
+  //   • Bearer <SUPABASE_SERVICE_ROLE_KEY>  (internal/admin curl path)
+  //   • Bearer <user JWT> with admin role   (admin UI path)
   const auth = req.headers.get("authorization") || "";
   const expectedToken = Deno.env.get("HAPL_SYNC_TOKEN");
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   const bearer = auth.startsWith("Bearer ") ? auth.slice(7) : "";
   let authorized = false;
 
   if (expectedToken && bearer === expectedToken) {
+    authorized = true;
+  } else if (serviceRoleKey && bearer === serviceRoleKey) {
     authorized = true;
   } else if (bearer) {
     // Verify user JWT + admin role via service-role client

@@ -129,7 +129,7 @@ serve(async (req: Request) => {
       .eq("region", "TR")
       .eq("status", "available")
       .in("availability_type", WATCHABLE_TYPES)
-      .gte("confidence", 0.7);
+      .gte("confidence", 0.5);
 
     if (providerIdFilter) availQuery = availQuery.eq("provider_id", providerIdFilter);
 

@@ -161,14 +161,14 @@ export function extractProvidersFromText(
       conf = Math.max(conf, 0.55);
     }
 
-    // TMDB-primary global providers: Firecrawl is only allowed to add them
-    // when there is hard evidence — a domain hit AND co-occurrence with the
-    // title in stream context. Otherwise drop (TMDB already covers them).
-    if (TMDB_PRIMARY_SLUGS.has(p.slug)) {
-      const hardEvidence =
-        domainHits > 0 && hasStreamContext && hasTitleContext;
-      if (!hardEvidence) continue;
-    }
+    // TMDB-primary global providers: TMDB watch/providers is authoritative.
+    // Free-text mentions (Turkish listicles like "the wire izle netflix.com",
+    // mock streaming sites, IMDb-style "available on …" snippets) are not
+    // reliable enough to override TMDB's silence. Skip these slugs entirely
+    // for Firecrawl gap-fill — they're either covered by TMDB or genuinely
+    // not in TR. This eliminated the The Wire false-positive (Netflix +
+    // Disney+) and is the minimum-blast-radius fix.
+    if (TMDB_PRIMARY_SLUGS.has(p.slug)) continue;
 
     // Drop low-confidence noise
     if (conf < 0.5) continue;

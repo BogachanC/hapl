@@ -98,6 +98,7 @@ interface SeedStats {
   titles_skipped_existing_fresh: number;
   availability_rows: number;
   aliases_added: number;
+  aliases_skipped_cached: number;
   errors: number;
 }
 
@@ -107,6 +108,7 @@ interface SourceStats {
   titles_upserted: number;
   availability_rows: number;
   aliases_added: number;
+  aliases_skipped_cached: number;
 }
 
 async function processOne(

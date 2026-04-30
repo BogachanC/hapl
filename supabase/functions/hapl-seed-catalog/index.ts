@@ -332,47 +332,68 @@ serve(async (req: Request) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  // Admin auth — accepts ANY of:
-  //   • Bearer <HAPL_SYNC_TOKEN>            (cron / curl path)
-  //   • Bearer <SUPABASE_SERVICE_ROLE_KEY>  (internal/admin curl path)
-  //   • Bearer <user JWT> with admin role   (admin UI path)
-  const auth = req.headers.get("authorization") || "";
-  const expectedToken = Deno.env.get("HAPL_SYNC_TOKEN");
-  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  // Admin auth — accepts EITHER:
+  //   • Bearer <HAPL_SYNC_TOKEN>           (server/cron/internal only — NEVER frontend)
+  //   • Bearer <user JWT> with admin role  (admin UI path — same model as `tmdb` fn)
+  const auth = req.headers.get("authorization") || req.headers.get("Authorization") || "";
   const bearer = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  const expectedToken = Deno.env.get("HAPL_SYNC_TOKEN");
+
   let authorized = false;
+  let authReason = "missing-credentials";
 
   if (expectedToken && bearer === expectedToken) {
     authorized = true;
-  } else if (serviceRoleKey && bearer === serviceRoleKey) {
-    authorized = true;
+    authReason = "sync-token";
   } else if (bearer) {
-    // Verify user JWT + admin role via service-role client
-    const sbAuth = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-    );
-    try {
-      const { data: claims } = await sbAuth.auth.getClaims(bearer);
-      const uid = claims?.claims?.sub;
-      if (uid) {
-        const { data: roleRow } = await sbAuth
-          .from("user_roles")
-          .select("role")
-          .eq("user_id", uid)
-          .eq("role", "admin")
-          .maybeSingle();
-        if (roleRow) authorized = true;
+    // Mirror the working `tmdb` function: anon-key client + Authorization
+    // header, getClaims(token), then has_role RPC. This validates the JWT
+    // against Supabase's signing keys correctly.
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+    if (!supabaseUrl || !anonKey) {
+      return new Response(JSON.stringify({ error: "server misconfigured" }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const sbUser = createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: `Bearer ${bearer}` } },
+    });
+
+    const { data: claimsData, error: claimsErr } = await sbUser.auth.getClaims(bearer);
+    if (claimsErr || !claimsData?.claims?.sub) {
+      authReason = `invalid-jwt:${claimsErr?.message || "no-claims"}`;
+    } else {
+      const userId = claimsData.claims.sub as string;
+      const { data: isAdmin, error: roleErr } = await sbUser.rpc("has_role", {
+        _user_id: userId,
+        _role: "admin",
+      });
+      if (roleErr) {
+        authReason = `role-check-error:${roleErr.message}`;
+      } else if (!isAdmin) {
+        // Authenticated but not admin → 403
+        return new Response(JSON.stringify({ error: "forbidden: admin role required" }), {
+          status: 403,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      } else {
+        authorized = true;
+        authReason = "admin-jwt";
       }
-    } catch { /* fall through */ }
+    }
   }
 
   if (!authorized) {
-    return new Response(JSON.stringify({ error: "unauthorized" }), {
+    console.warn("[hapl-seed-catalog] auth failed:", authReason);
+    return new Response(JSON.stringify({ error: "unauthorized", reason: authReason }), {
       status: 401,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
+  console.log("[hapl-seed-catalog] authorized via:", authReason);
+
 
   let body: any = {};
   try { body = await req.json(); } catch { /* allow empty */ }

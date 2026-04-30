@@ -1,0 +1,1 @@
+UPDATE public.streaming_providers SET display_name = 'HBO Max' WHERE slug = 'max';

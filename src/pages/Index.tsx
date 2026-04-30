@@ -1,11 +1,11 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import haplLogo from '@/assets/hapl-logo.png';
-import { usePlatforms } from '@/hooks/use-contents';
+import { useStreamingProviders } from '@/hooks/useStreamingProviders';
 import { useContentSearch } from '@/hooks/useContentSearch';
 import { useHomeFeed, type FeedCategory } from '@/hooks/useHomeFeed';
 import { SearchBar } from '@/components/SearchBar';
 import { SearchResults } from '@/components/SearchResults';
-import { PlatformFilter } from '@/components/PlatformFilter';
+import { PlatformFilter, type PlatformFilterItem } from '@/components/PlatformFilter';
 import { TypeFilter } from '@/components/TypeFilter';
 import { Tv, Loader2, Plus, ArrowLeft } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -20,36 +20,68 @@ function typeToCategory(t: string | undefined): FeedCategory {
 }
 
 const Index = () => {
-  const { results: searchResults, loading: searchLoading, hasSearched, query: search, setQuery: setSearch, clear: clearSearch } = useContentSearch();
-  const [selectedPlatform, setSelectedPlatform] = useState<string | undefined>();
+  const {
+    results: searchResults,
+    loading: searchLoading,
+    hasSearched,
+    query: search,
+    setQuery: setSearch,
+    clear: clearSearch,
+  } = useContentSearch();
+
+  // PlatformFilter state is now the canonical streaming_providers.slug
+  // (no more bridging to a drifted `platforms` table).
+  const [selectedProviderSlug, setSelectedProviderSlug] = useState<string | undefined>();
   const [selectedType, setSelectedType] = useState<string | undefined>();
 
-  const { data: platforms, isLoading: platformsLoading } = usePlatforms();
+  const { data: providers, isLoading: providersLoading } = useStreamingProviders();
 
-  // Map selectedPlatform (platforms.id UUID) → streaming_providers.slug.
-  // The legacy `platforms` table uses slightly different slugs than
-  // `streaming_providers` for a few brands; bridge them so the home feed
-  // filter actually matches.
-  const PLATFORM_TO_PROVIDER_SLUG: Record<string, string> = {
-    "prime-video": "amazon-prime-video",
-    "hbo-max": "max",
-    "tod": "tod-tv",
-  };
-  const providerSlug = useMemo(() => {
-    if (!selectedPlatform || !platforms) return null;
-    const p = platforms.find((x) => x.id === selectedPlatform);
-    if (!p?.slug) return null;
-    return PLATFORM_TO_PROVIDER_SLUG[p.slug] ?? p.slug;
-  }, [selectedPlatform, platforms]);
+  const filterItems: PlatformFilterItem[] = useMemo(
+    () =>
+      (providers || []).map((p) => ({
+        id: p.slug,
+        slug: p.slug,
+        name: p.display_name,
+      })),
+    [providers],
+  );
 
   const category = typeToCategory(selectedType);
 
-  const { results: feedResults, loading: feedLoading } = useHomeFeed({
+  const {
+    results: feedResults,
+    loading: feedLoading,
+    loadingMore,
+    hasMore,
+    loadMore,
+  } = useHomeFeed({
     category,
-    provider: providerSlug,
+    provider: selectedProviderSlug ?? null,
     enabled: !hasSearched,
-    limit: 36,
+    pageSize: 36,
+    maxItems: 120,
   });
+
+  // ─── Infinite scroll sentinel ──────────────────────────────────────────
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const loadMoreRef = useRef(loadMore);
+  loadMoreRef.current = loadMore;
+
+  useEffect(() => {
+    if (hasSearched) return;
+    const el = sentinelRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) loadMoreRef.current();
+        }
+      },
+      { rootMargin: '600px 0px' },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [hasSearched, feedResults.length, hasMore]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -122,18 +154,37 @@ const Index = () => {
         ) : (
           <>
             <TypeFilter selected={selectedType} onSelect={setSelectedType} />
-            {platforms && <PlatformFilter platforms={platforms} selected={selectedPlatform} onSelect={setSelectedPlatform} />}
+            <PlatformFilter
+              platforms={filterItems}
+              selected={selectedProviderSlug}
+              onSelect={setSelectedProviderSlug}
+            />
 
-            {(platformsLoading || feedLoading) ? (
+            {(providersLoading || feedLoading) ? (
               <div className="flex items-center justify-center py-20">
                 <Loader2 className="h-6 w-6 animate-spin text-primary" />
               </div>
             ) : feedResults.length > 0 ? (
-              <SearchResults results={feedResults} />
+              <>
+                <SearchResults results={feedResults} />
+                <div ref={sentinelRef} className="h-8" aria-hidden />
+                {loadingMore && (
+                  <div className="flex items-center justify-center py-4">
+                    <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                  </div>
+                )}
+                {!hasMore && feedResults.length >= 24 && (
+                  <p className="text-center text-[11px] text-muted-foreground/60 py-4">
+                    Bu kadar — daha fazla içerik için kategori veya platform değiştir.
+                  </p>
+                )}
+              </>
             ) : (
               <div className="text-center py-20 space-y-2">
                 <Tv className="h-10 w-10 text-muted-foreground/30 mx-auto" />
-                <p className="text-sm text-muted-foreground">Henüz içerik yok. Yönetici panelinden katalog keşfini başlatabilirsin.</p>
+                <p className="text-sm text-muted-foreground">
+                  Henüz içerik yok. Yönetici panelinden katalog keşfini başlatabilirsin.
+                </p>
               </div>
             )}
           </>

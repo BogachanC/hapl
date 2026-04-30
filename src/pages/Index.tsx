@@ -26,11 +26,20 @@ const Index = () => {
 
   const { data: platforms, isLoading: platformsLoading } = usePlatforms();
 
-  // Map selectedPlatform (platforms.id UUID) → streaming_providers.slug
+  // Map selectedPlatform (platforms.id UUID) → streaming_providers.slug.
+  // The legacy `platforms` table uses slightly different slugs than
+  // `streaming_providers` for a few brands; bridge them so the home feed
+  // filter actually matches.
+  const PLATFORM_TO_PROVIDER_SLUG: Record<string, string> = {
+    "prime-video": "amazon-prime-video",
+    "hbo-max": "max",
+    "tod": "tod-tv",
+  };
   const providerSlug = useMemo(() => {
     if (!selectedPlatform || !platforms) return null;
     const p = platforms.find((x) => x.id === selectedPlatform);
-    return p?.slug ?? null;
+    if (!p?.slug) return null;
+    return PLATFORM_TO_PROVIDER_SLUG[p.slug] ?? p.slug;
   }, [selectedPlatform, platforms]);
 
   const category = typeToCategory(selectedType);

@@ -18,7 +18,7 @@
 // (tmdb_id, tmdb_type) and content_availability (title_id, provider_id, region, availability_type).
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.4";
 
 import { normalizeTitle } from "../_shared/normalize.ts";
 import {

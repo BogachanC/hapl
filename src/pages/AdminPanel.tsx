@@ -8,6 +8,7 @@ import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
+import { CatalogSeedPanel } from '@/components/CatalogSeedPanel';
 
 
 type TmdbResult = {
@@ -168,6 +169,8 @@ const AdminPanel = () => {
       </header>
 
       <main className="container max-w-lg mx-auto px-4 py-4 space-y-4">
+
+        <CatalogSeedPanel />
 
         {/* Content Type Toggle */}
         <div className="flex gap-2">

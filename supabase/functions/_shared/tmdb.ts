@@ -169,3 +169,93 @@ export async function tmdbTranslations(
   }
   return out;
 }
+
+// ─── Discover (catalog seed) ──────────────────────────────────────────────
+// Lightweight result shape returned by /discover/{movie,tv}. Used by
+// hapl-seed-catalog to enumerate titles, then fed into tmdbDetail() +
+// tmdbWatchProvidersTR() + hydrateAliases() like any other indexed title.
+
+export interface TmdbDiscoverItem {
+  id: number;
+  media_type: "movie" | "tv";
+  title: string;
+  original_title: string;
+  overview: string;
+  poster_path: string | null;
+  backdrop_path: string | null;
+  release_date: string | null;
+  vote_average: number;
+  vote_count: number;
+  popularity: number;
+  genre_ids: number[];
+}
+
+export interface TmdbDiscoverOptions {
+  type: "movie" | "tv";
+  page?: number;
+  withWatchProviders?: number[]; // TMDB provider_ids (OR-joined)
+  watchRegion?: string;          // default "TR"
+  withGenres?: number[];         // e.g. [99] for documentary (AND-joined)
+  sortBy?: string;               // default "popularity.desc"
+  language?: string;             // default "tr-TR"
+  voteCountGte?: number;         // floor noise (e.g. 20)
+  includeAdult?: boolean;
+}
+
+export async function tmdbDiscover(
+  opts: TmdbDiscoverOptions,
+): Promise<{ results: TmdbDiscoverItem[]; total_pages: number }> {
+  const {
+    type,
+    page = 1,
+    withWatchProviders,
+    watchRegion = "TR",
+    withGenres,
+    sortBy = "popularity.desc",
+    language = "tr-TR",
+    voteCountGte,
+    includeAdult = false,
+  } = opts;
+
+  const params = new URLSearchParams({
+    api_key: getKey(),
+    language,
+    page: String(page),
+    sort_by: sortBy,
+    include_adult: includeAdult ? "true" : "false",
+    watch_region: watchRegion,
+  });
+  if (withWatchProviders && withWatchProviders.length > 0) {
+    params.set("with_watch_providers", withWatchProviders.join("|"));
+  }
+  if (withGenres && withGenres.length > 0) {
+    params.set("with_genres", withGenres.join(","));
+  }
+  if (typeof voteCountGte === "number") {
+    params.set("vote_count.gte", String(voteCountGte));
+  }
+
+  const url = `${TMDB_BASE}/discover/${type}?${params.toString()}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    console.error(`[tmdb] discover/${type} failed`, res.status, await res.text().catch(() => ""));
+    return { results: [], total_pages: 0 };
+  }
+  const data = await res.json();
+  const results: TmdbDiscoverItem[] = (data.results || []).map((r: any) => ({
+    id: r.id,
+    media_type: type,
+    title: r.title || r.name || "",
+    original_title: r.original_title || r.original_name || "",
+    overview: r.overview || "",
+    poster_path: r.poster_path,
+    backdrop_path: r.backdrop_path,
+    release_date: r.release_date || r.first_air_date || null,
+    vote_average: r.vote_average ?? 0,
+    vote_count: r.vote_count ?? 0,
+    popularity: r.popularity ?? 0,
+    genre_ids: r.genre_ids || [],
+  }));
+  return { results, total_pages: data.total_pages || 0 };
+}
+

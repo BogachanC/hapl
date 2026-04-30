@@ -224,11 +224,15 @@ serve(async (req: Request) => {
       }
       const platforms = Array.from(bestPerProvider.entries()).map(([pid, info]) => {
         const sp = provById.get(pid);
-        const disp = sp ? dispBySlug.get(sp.slug) : undefined;
+        const disp = sp ? resolveDisplay(sp.slug) : undefined;
+        // Fallback: even when the legacy `platforms` row is missing, surface the
+        // streaming_providers entry so the title still renders. Color/logo will
+        // be best-effort defaults.
+        const slug = sp?.slug || "";
         return {
           id: pid,
-          slug: sp?.slug || "",
-          name: disp?.name || sp?.display_name || "",
+          slug,
+          name: disp?.name || sp?.display_name || slug,
           logo_url: disp?.logo_url || null,
           color: disp?.color || "#666666",
           availability_type: info.availability_type,

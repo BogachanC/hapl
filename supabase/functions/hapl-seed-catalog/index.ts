@@ -332,10 +332,38 @@ serve(async (req: Request) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  // Admin auth — Bearer HAPL_SYNC_TOKEN (same pattern as hapl-refresh)
-  const expected = Deno.env.get("HAPL_SYNC_TOKEN");
+  // Admin auth — accepts EITHER:
+  //   • Bearer <HAPL_SYNC_TOKEN>           (cron / curl path)
+  //   • Bearer <user JWT> with admin role  (admin UI path)
   const auth = req.headers.get("authorization") || "";
-  if (!expected || auth !== `Bearer ${expected}`) {
+  const expectedToken = Deno.env.get("HAPL_SYNC_TOKEN");
+  const bearer = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  let authorized = false;
+
+  if (expectedToken && bearer === expectedToken) {
+    authorized = true;
+  } else if (bearer) {
+    // Verify user JWT + admin role via service-role client
+    const sbAuth = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    );
+    try {
+      const { data: claims } = await sbAuth.auth.getClaims(bearer);
+      const uid = claims?.claims?.sub;
+      if (uid) {
+        const { data: roleRow } = await sbAuth
+          .from("user_roles")
+          .select("role")
+          .eq("user_id", uid)
+          .eq("role", "admin")
+          .maybeSingle();
+        if (roleRow) authorized = true;
+      }
+    } catch { /* fall through */ }
+  }
+
+  if (!authorized) {
     return new Response(JSON.stringify({ error: "unauthorized" }), {
       status: 401,
       headers: { ...corsHeaders, "Content-Type": "application/json" },

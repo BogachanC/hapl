@@ -2,7 +2,8 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
 export interface Platform {
-  id?: number;
+  id?: number | string;
+  slug?: string;
   name: string;
   logo: string | null;
   type: "subscription" | "rent" | "free";

@@ -10,11 +10,16 @@ export const platformStyles: Record<string, PlatformStyle> = {
   gain: { bg: 'bg-platform-gain', text: 'text-black' },
   'disney-plus': { bg: 'bg-platform-disney', text: 'text-white' },
   'prime-video': { bg: 'bg-platform-prime', text: 'text-white' },
+  // canonical streaming_providers slug
+  'amazon-prime-video': { bg: 'bg-platform-prime', text: 'text-white' },
   tod: { bg: 'bg-platform-tod', text: 'text-yellow-400' },
+  'tod-tv': { bg: 'bg-platform-tod', text: 'text-yellow-400' },
   tabii: { bg: 'bg-platform-tabii', text: 'text-green-400' },
   mubi: { bg: 'bg-platform-mubi', text: 'text-white' },
   'bein-connect': { bg: 'bg-platform-bein', text: 'text-white' },
   'hbo-max': { bg: 'bg-platform-hbo', text: 'text-black' },
+  // canonical streaming_providers slug for HBO Max
+  max: { bg: 'bg-platform-hbo', text: 'text-black' },
   puhutv: { bg: 'bg-platform-puhutv', text: 'text-black' },
   'tv-plus': { bg: 'bg-platform-tvplus', text: 'text-white' },
   'dsmart-go': { bg: 'bg-platform-dsmart', text: 'text-white' },

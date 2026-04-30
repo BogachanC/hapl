@@ -120,39 +120,55 @@ serve(async (req: Request) => {
       default:            kindFilter = null;
     }
 
-    // 3) Pull eligible title_ids from content_availability first
-    //    (status=available, region=TR, watchable types only)
+    // 3) Two-phase availability fetch:
+    //   Phase A — apply provider filter (if any) to find ELIGIBLE title_ids.
+    //             This decides which titles appear in the feed.
+    //   Phase B — fetch FULL availability for those title_ids (no provider
+    //             filter). This decides which platform badges show on each
+    //             card. A title surfaced via TV+ should still display Max,
+    //             Netflix, etc. if also available there.
     const WATCHABLE_TYPES = ["stream", "free", "ads"];
-    let availQuery = sb
+
+    // Phase A: filter
+    let filterQuery = sb
+      .from("content_availability")
+      .select("title_id")
+      .eq("region", "TR")
+      .eq("status", "available")
+      .in("availability_type", WATCHABLE_TYPES)
+      .gte("confidence", 0.5);
+    if (providerIdFilter) filterQuery = filterQuery.eq("provider_id", providerIdFilter);
+
+    // Cap candidate pool — small filtered set so home stays snappy.
+    const POOL_SIZE = Math.min(800, Math.max(120, (offset + limit) * 4));
+    const { data: filterRows, error: filterErr } = await filterQuery.limit(POOL_SIZE * 3);
+    if (filterErr) throw filterErr;
+    if (!filterRows || filterRows.length === 0) {
+      return new Response(JSON.stringify({ ok: true, results: [], total: 0 }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const eligibleTitleIds = Array.from(new Set(filterRows.map((r: any) => r.title_id))).slice(0, POOL_SIZE);
+
+    // Phase B: full availability for those titles (NO provider filter)
+    const { data: availRows, error: availErr } = await sb
       .from("content_availability")
       .select("title_id, provider_id, availability_type, confidence")
       .eq("region", "TR")
       .eq("status", "available")
       .in("availability_type", WATCHABLE_TYPES)
-      .gte("confidence", 0.5);
-
-    if (providerIdFilter) availQuery = availQuery.eq("provider_id", providerIdFilter);
-
-    // We over-fetch a candidate pool, then rank + paginate in-memory.
-    // Pool size is limit * (something) capped — keeps DB cheap, response fast.
-    const POOL_SIZE = Math.min(800, Math.max(120, (offset + limit) * 4));
-    const { data: availRows, error: availErr } = await availQuery.limit(POOL_SIZE * 3);
+      .gte("confidence", 0.5)
+      .in("title_id", eligibleTitleIds);
     if (availErr) throw availErr;
-
-    if (!availRows || availRows.length === 0) {
-      return new Response(JSON.stringify({ ok: true, results: [], total: 0 }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
 
     // Group by title_id
     const byTitle = new Map<string, Array<{ provider_id: string; availability_type: string; confidence: number }>>();
-    for (const r of availRows) {
+    for (const r of availRows || []) {
       const arr = byTitle.get(r.title_id) || [];
       arr.push({ provider_id: r.provider_id, availability_type: r.availability_type, confidence: Number(r.confidence) });
       byTitle.set(r.title_id, arr);
     }
-    const titleIds = Array.from(byTitle.keys()).slice(0, POOL_SIZE);
+    const titleIds = eligibleTitleIds;
 
     // 4) Pull title rows
     let titleQuery = sb

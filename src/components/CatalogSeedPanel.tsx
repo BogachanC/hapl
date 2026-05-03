@@ -292,6 +292,7 @@ export function CatalogSeedPanel() {
               setRunning(false);
               return;
             }
+            setErrorMsg(CONNECTION_ERROR_MESSAGE);
           }
         } catch {
           setDebugInfo({ functionName: SEED_FUNCTION, action: 'continue', jobId: currentJobId, errorMessage: msg });

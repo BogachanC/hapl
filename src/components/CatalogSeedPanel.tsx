@@ -63,7 +63,8 @@ interface ChunkResponse {
 
 interface SeedJobSummary {
   id: string;
-  status: 'running' | 'partial' | 'paused' | 'failed' | 'completed' | string;
+  status: 'running' | 'partial' | 'paused' | 'failed' | 'stale_failed' | 'completed' | string;
+  is_stale?: boolean;
   selected_provider_slug?: string | null;
   current_strategy?: string | null;
   current_media_type?: string | null;
@@ -74,6 +75,7 @@ interface SeedJobSummary {
   plan_total?: number | null;
   last_error?: string | null;
   updated_at?: string | null;
+  last_heartbeat_at?: string | null;
   stats?: SeedStats;
   sources?: SourceStats[];
   coverage_delta?: CoverageDelta | null;

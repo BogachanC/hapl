@@ -255,6 +255,66 @@ function buildDeepPlan(cfg: DeepConfig, providersFilter: string[] | null): Job[]
   return jobs;
 }
 
+// ─── Provider-targeted sweep ───────────────────────────────────────────
+// For a fixed allow-list of TR providers, run multi-strategy discover and
+// require TMDB /watch/providers TR to actually contain the provider before
+// writing availability rows. Title-only upsert still happens for unverified.
+const PROVIDER_TARGETED_ALLOWED = new Set([
+  "netflix", "amazon-prime-video", "max", "disney-plus", "mubi", "tv-plus",
+]);
+
+interface ProviderTargetedConfig {
+  pages_per_strategy: number;
+  vote_count_floor: number;
+  vote_average_floor: number;
+  strategies: Array<"popularity" | "vote_average" | "vote_count" | "recent">;
+  recent_year_from: number;
+  providers?: string[]; // optional sub-filter
+}
+
+function buildProviderTargetedPlan(cfg: ProviderTargetedConfig): Job[] {
+  const jobs: Job[] = [];
+  const recentGte = `${cfg.recent_year_from}-01-01`;
+  const filter = cfg.providers && cfg.providers.length > 0
+    ? new Set(cfg.providers.filter((s) => PROVIDER_TARGETED_ALLOWED.has(s)))
+    : PROVIDER_TARGETED_ALLOWED;
+
+  for (const p of TMDB_PROVIDERS_TR) {
+    if (!filter.has(p.slug)) continue;
+    for (const type of ["movie", "tv"] as const) {
+      for (const strat of cfg.strategies) {
+        for (let page = 1; page <= cfg.pages_per_strategy; page++) {
+          const job: Job = {
+            source: `pt:${p.slug}:${strat}`,
+            type,
+            page,
+            tmdb_provider_id: p.tmdb_id,
+            verify_tmdb_provider_id: p.tmdb_id,
+            strategy: strat,
+          };
+          if (strat === "popularity") {
+            job.sort_by = "popularity.desc";
+            job.vote_count_gte = cfg.vote_count_floor;
+          } else if (strat === "vote_average") {
+            job.sort_by = "vote_average.desc";
+            job.vote_count_gte = Math.max(cfg.vote_count_floor, 50);
+            job.vote_average_gte = cfg.vote_average_floor;
+          } else if (strat === "vote_count") {
+            job.sort_by = "vote_count.desc";
+            job.vote_count_gte = cfg.vote_count_floor;
+          } else if (strat === "recent") {
+            job.sort_by = type === "movie" ? "primary_release_date.desc" : "first_air_date.desc";
+            job.vote_count_gte = Math.max(5, Math.floor(cfg.vote_count_floor / 2));
+            job.release_date_gte = recentGte;
+          }
+          jobs.push(job);
+        }
+      }
+    }
+  }
+  return jobs;
+}
+
 function emptySource(name: string): SourceStats {
   return {
     source: name,

@@ -380,6 +380,7 @@ serve(async (req: Request) => {
       stats: {
         discovered: 0, titles_upserted: 0, availability_rows: 0,
         aliases_added: 0, aliases_skipped_cached: 0, errors: 0,
+        kind_counts: {},
       },
       sources: {},
     };

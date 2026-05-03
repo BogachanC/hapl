@@ -39,16 +39,34 @@ interface ChunkResponse {
   elapsed_ms: number;
 }
 
-const MAX_CHUNKS = 200; // safety cap (deep mode may need many chunks)
+const MAX_CHUNKS = 400;
 
 type SeedMode = 'small' | 'large' | 'wide' | 'deep' | 'provider-targeted';
+type ProviderSlug = 'all' | 'netflix' | 'amazon-prime-video' | 'max' | 'disney-plus' | 'mubi' | 'tv-plus';
+type Depth = 'standard' | 'full';
+
+const PROVIDER_OPTIONS: { slug: ProviderSlug; label: string }[] = [
+  { slug: 'all', label: 'Tümü (6 platform)' },
+  { slug: 'netflix', label: 'Netflix' },
+  { slug: 'max', label: 'HBO Max' },
+  { slug: 'disney-plus', label: 'Disney+' },
+  { slug: 'amazon-prime-video', label: 'Amazon Prime Video' },
+  { slug: 'mubi', label: 'MUBI' },
+  { slug: 'tv-plus', label: 'TV+' },
+];
 
 export function CatalogSeedPanel() {
   const [running, setRunning] = useState(false);
   const [lastResult, setLastResult] = useState<ChunkResponse | null>(null);
   const [mode, setMode] = useState<SeedMode>('small');
+  const [providerSlug, setProviderSlug] = useState<ProviderSlug>('all');
+  const [depth, setDepth] = useState<Depth>('standard');
   const [progress, setProgress] = useState<{ chunks: number; processed: number; total: number } | null>(null);
   const [totalElapsedMs, setTotalElapsedMs] = useState(0);
+
+  const isProviderMode = mode === 'provider-targeted';
+  const isSinglePlatform = isProviderMode && providerSlug !== 'all';
+  const fullDisabled = !isSinglePlatform;
 
   const runSeed = async () => {
     setRunning(true);
@@ -56,44 +74,56 @@ export function CatalogSeedPanel() {
     setProgress(null);
     setTotalElapsedMs(0);
 
-    const initialParams =
-      mode === 'small'
-        ? { pages_primary: 1, pages_secondary: 1, pages_docs: 1, vote_floor: 20 }
-        : mode === 'large'
-        ? { pages_primary: 3, pages_secondary: 2, pages_docs: 2, vote_floor: 20 }
-        : mode === 'wide'
-        ? { pages_primary: 8, pages_secondary: 5, pages_docs: 4, vote_floor: 15 }
-        : mode === 'deep'
-        ? {
-            mode: 'deep',
-            pages_per_strategy: 5,
-            pages_docs_per_strategy: 3,
-            vote_count_floor: 15,
-            vote_average_floor: 7.0,
-            strategies: ['popularity', 'vote_count', 'vote_average', 'recent'],
-            recent_year_from: 2022,
-          }
-        : {
-            mode: 'provider-targeted',
-            pages_per_strategy: 5,
-            vote_count_floor: 10,
-            vote_average_floor: 6.5,
-            strategies: ['popularity', 'vote_count', 'vote_average', 'recent'],
-            recent_year_from: 2022,
-            providers: ['netflix', 'amazon-prime-video', 'max', 'disney-plus', 'mubi', 'tv-plus'],
-          };
+    let initialParams: any;
+    if (mode === 'small') {
+      initialParams = { pages_primary: 1, pages_secondary: 1, pages_docs: 1, vote_floor: 20 };
+    } else if (mode === 'large') {
+      initialParams = { pages_primary: 3, pages_secondary: 2, pages_docs: 2, vote_floor: 20 };
+    } else if (mode === 'wide') {
+      initialParams = { pages_primary: 8, pages_secondary: 5, pages_docs: 4, vote_floor: 15 };
+    } else if (mode === 'deep') {
+      initialParams = {
+        mode: 'deep',
+        pages_per_strategy: 5,
+        pages_docs_per_strategy: 3,
+        vote_count_floor: 15,
+        vote_average_floor: 7.0,
+        strategies: ['popularity', 'vote_count', 'vote_average', 'recent'],
+        recent_year_from: 2022,
+      };
+    } else {
+      // provider-targeted
+      const allSlugs = PROVIDER_OPTIONS.filter((p) => p.slug !== 'all').map((p) => p.slug);
+      const providers = providerSlug === 'all' ? allSlugs : [providerSlug];
 
-    toast.info(
-      mode === 'small'
-        ? 'Küçük seed başlatıldı (~300 içerik). Lütfen 1-2 dakika bekleyin…'
-        : mode === 'large'
-        ? 'Büyük seed başlatıldı (~1000 içerik). Birden fazla chunk halinde çalışacak…'
-        : mode === 'wide'
-        ? 'Geniş seed başlatıldı (~3000 hedef). Çok sayıda chunk halinde çalışacak, sayfada kalın…'
-        : mode === 'deep'
-        ? 'Derin TMDB Expansion başlatıldı (~5000+ hedef). Çoklu strateji, uzun sürebilir, sayfada kalın…'
-        : 'Platform bazlı TMDB keşfi başlatıldı (Netflix, Prime, Max, Disney+, MUBI, TV+). Sayfada kalın…'
-    );
+      if (depth === 'full' && isSinglePlatform) {
+        initialParams = {
+          mode: 'provider-full',
+          providers,
+          provider: providerSlug,
+          vote_count_floor: 10,
+          vote_average_floor: 6.5,
+          strategies: ['popularity', 'vote_count', 'vote_average', 'recent'],
+          recent_year_from: 2022,
+          max_pages_per_strategy: 500,
+        };
+      } else {
+        initialParams = {
+          mode: 'provider-targeted',
+          pages_per_strategy: 5,
+          vote_count_floor: 10,
+          vote_average_floor: 6.5,
+          strategies: ['popularity', 'vote_count', 'vote_average', 'recent'],
+          recent_year_from: 2022,
+          providers,
+        };
+      }
+    }
+
+    const label = isProviderMode
+      ? `Platform Bazlı (${providerSlug === 'all' ? 'Tümü' : providerSlug}${depth === 'full' ? ' · Tüm TMDB Sonuçları' : ''})`
+      : mode;
+    toast.info(`Keşif başlatıldı: ${label}. Sayfada kalın…`);
 
     try {
       let cursor: any = null;
@@ -109,11 +139,7 @@ export function CatalogSeedPanel() {
         chunkCount++;
         lastChunk = chunk;
 
-        setProgress({
-          chunks: chunkCount,
-          processed: chunk.processed_jobs,
-          total: chunk.plan_total,
-        });
+        setProgress({ chunks: chunkCount, processed: chunk.processed_jobs, total: chunk.plan_total });
         setLastResult(chunk);
         setTotalElapsedMs(Date.now() - t0);
 
@@ -160,10 +186,79 @@ export function CatalogSeedPanel() {
         <Button variant={mode === 'deep' ? 'default' : 'outline'} size="sm" onClick={() => setMode('deep')} disabled={running}>
           Derin (~5000+)
         </Button>
-        <Button variant={mode === 'provider-targeted' ? 'default' : 'outline'} size="sm" onClick={() => setMode('provider-targeted')} disabled={running}>
-          Platform Bazlı (6 platform)
+        <Button variant={isProviderMode ? 'default' : 'outline'} size="sm" onClick={() => setMode('provider-targeted')} disabled={running}>
+          Platform Bazlı
         </Button>
       </div>
+
+      {isProviderMode && (
+        <div className="rounded-lg border border-border/40 bg-background/40 p-3 space-y-3">
+          <div>
+            <div className="text-xs font-bold mb-1">Platform Bazlı TMDB Keşfi</div>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Seçili platform için TMDB'de Türkiye watch region ile görünen film/dizi içerikleri keşfedilir.
+              Her sonuç ayrıca <code className="text-[10px]">/watch/providers</code> ile doğrulanır.
+            </p>
+          </div>
+
+          <div className="space-y-1">
+            <div className="text-[11px] text-muted-foreground">Platform</div>
+            <div className="flex flex-wrap gap-1.5">
+              {PROVIDER_OPTIONS.map((p) => (
+                <Button
+                  key={p.slug}
+                  variant={providerSlug === p.slug ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => {
+                    setProviderSlug(p.slug);
+                    if (p.slug === 'all') setDepth('standard');
+                  }}
+                  disabled={running}
+                  className="h-7 text-xs"
+                >
+                  {p.label}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <div className="text-[11px] text-muted-foreground">Derinlik</div>
+            <div className="flex flex-wrap gap-1.5">
+              <Button
+                variant={depth === 'standard' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setDepth('standard')}
+                disabled={running}
+                className="h-7 text-xs"
+              >
+                Standart (5 sayfa × strateji)
+              </Button>
+              <Button
+                variant={depth === 'full' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => {
+                  if (fullDisabled) {
+                    toast.warning('Tüm TMDB Sonuçları sadece tek platform seçiliyken kullanılabilir.');
+                    return;
+                  }
+                  setDepth('full');
+                }}
+                disabled={running || fullDisabled}
+                className="h-7 text-xs"
+                title={fullDisabled ? 'Tek platform seçin' : ''}
+              >
+                Tüm TMDB Sonuçları
+              </Button>
+            </div>
+            {depth === 'full' && isSinglePlatform && (
+              <p className="text-[10px] text-muted-foreground leading-relaxed pt-1">
+                Seçili platform için TMDB'nin döndürdüğü tüm TR watch-region sayfalarını tarar. Uzun sürebilir.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
 
       <Button onClick={runSeed} disabled={running} className="w-full gap-2">
         {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
@@ -192,6 +287,12 @@ export function CatalogSeedPanel() {
       {lastResult && (
         <div className="rounded-lg bg-secondary/40 p-3 space-y-2 text-xs">
           <div className="font-bold text-foreground">{lastResult.done ? 'Sonuç' : 'Ara sonuç'}</div>
+          {isProviderMode && (
+            <div className="text-[11px] text-muted-foreground">
+              Seçili platform: <span className="text-foreground font-medium">{providerSlug}</span>
+              {depth === 'full' && isSinglePlatform && ' · Tüm TMDB Sonuçları'}
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-muted-foreground">
             <div>Bulunan:</div>           <div className="text-foreground font-medium">{lastResult.stats.discovered}</div>
             <div>Yazılan içerik:</div>     <div className="text-foreground font-medium">{lastResult.stats.titles_upserted}</div>
@@ -218,19 +319,6 @@ export function CatalogSeedPanel() {
               </div>
             </>
           )}
-          {lastResult.sources?.length > 0 && (
-            <>
-              <div className="font-bold text-foreground pt-2">Kaynaklar</div>
-              <div className="space-y-1">
-                {lastResult.sources.map((s) => (
-                  <div key={s.source} className="flex justify-between text-muted-foreground">
-                    <span className="font-medium text-foreground">{s.source}</span>
-                    <span>{s.titles_upserted} title · {s.availability_rows} avail · {s.aliases_added} alias</span>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
           {lastResult.stats.kind_counts && Object.keys(lastResult.stats.kind_counts).length > 0 && (
             <>
               <div className="font-bold text-foreground pt-2">Kategori dağılımı</div>
@@ -239,6 +327,19 @@ export function CatalogSeedPanel() {
                   <div key={k} className="flex justify-between text-muted-foreground">
                     <span className="font-medium text-foreground">{k}</span>
                     <span>{v}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+          {lastResult.sources?.length > 0 && (
+            <>
+              <div className="font-bold text-foreground pt-2">Kaynaklar</div>
+              <div className="space-y-1 max-h-40 overflow-auto">
+                {lastResult.sources.map((s) => (
+                  <div key={s.source} className="flex justify-between text-muted-foreground">
+                    <span className="font-medium text-foreground">{s.source}</span>
+                    <span>{s.titles_upserted} title · {s.availability_rows} avail · {s.aliases_added} alias</span>
                   </div>
                 ))}
               </div>

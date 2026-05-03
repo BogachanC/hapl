@@ -59,14 +59,26 @@ export function CatalogSeedPanel() {
         ? { pages_primary: 1, pages_secondary: 1, pages_docs: 1, vote_floor: 20 }
         : mode === 'large'
         ? { pages_primary: 3, pages_secondary: 2, pages_docs: 2, vote_floor: 20 }
-        : { pages_primary: 8, pages_secondary: 5, pages_docs: 4, vote_floor: 15 };
+        : mode === 'wide'
+        ? { pages_primary: 8, pages_secondary: 5, pages_docs: 4, vote_floor: 15 }
+        : {
+            mode: 'deep',
+            pages_per_strategy: 5,
+            pages_docs_per_strategy: 3,
+            vote_count_floor: 15,
+            vote_average_floor: 7.0,
+            strategies: ['popularity', 'vote_count', 'vote_average', 'recent'],
+            recent_year_from: 2022,
+          };
 
     toast.info(
       mode === 'small'
         ? 'Küçük seed başlatıldı (~300 içerik). Lütfen 1-2 dakika bekleyin…'
         : mode === 'large'
         ? 'Büyük seed başlatıldı (~1000 içerik). Birden fazla chunk halinde çalışacak…'
-        : 'Geniş seed başlatıldı (~3000 hedef). Çok sayıda chunk halinde çalışacak, sayfada kalın…'
+        : mode === 'wide'
+        ? 'Geniş seed başlatıldı (~3000 hedef). Çok sayıda chunk halinde çalışacak, sayfada kalın…'
+        : 'Derin TMDB Expansion başlatıldı (~5000+ hedef). Çoklu strateji, uzun sürebilir, sayfada kalın…'
     );
 
     try {

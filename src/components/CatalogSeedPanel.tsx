@@ -6,8 +6,13 @@ import { toast } from 'sonner';
 
 interface SeedStats {
   discovered: number;
+  titles_processed?: number;
+  titles_new?: number;
+  titles_existing?: number;
   titles_upserted: number;
   availability_rows: number;
+  availability_new?: number;
+  availability_existing?: number;
   aliases_added: number;
   aliases_skipped_cached?: number;
   errors: number;
@@ -27,6 +32,19 @@ interface SourceStats {
   aliases_skipped_cached?: number;
 }
 
+interface CoverageDelta {
+  target_slug: string;
+  titles_total_before: number;
+  titles_total_after: number;
+  titles_total_delta: number;
+  target_avail_before: number;
+  target_avail_after: number;
+  target_avail_delta: number;
+  target_available_titles_before: number;
+  target_available_titles_after: number;
+  target_available_titles_delta: number;
+}
+
 interface ChunkResponse {
   ok: boolean;
   done: boolean;
@@ -36,6 +54,7 @@ interface ChunkResponse {
   jobs_done_this_chunk: number;
   stats: SeedStats;
   sources: SourceStats[];
+  coverage_delta?: CoverageDelta | null;
   elapsed_ms: number;
 }
 

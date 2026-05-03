@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
-import { Loader2, Sparkles, Database } from 'lucide-react';
+import { Loader2, Sparkles, Database, AlertTriangle, RotateCw, Play } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface SeedStats {
@@ -48,6 +48,8 @@ interface CoverageDelta {
 interface ChunkResponse {
   ok: boolean;
   done: boolean;
+  status?: 'partial' | 'completed' | 'failed';
+  job_id?: string | null;
   next_cursor: any | null;
   plan_total: number;
   processed_jobs: number;
@@ -55,10 +57,12 @@ interface ChunkResponse {
   stats: SeedStats;
   sources: SourceStats[];
   coverage_delta?: CoverageDelta | null;
+  error?: string | null;
   elapsed_ms: number;
 }
 
-const MAX_CHUNKS = 400;
+const MAX_CHUNKS = 800;
+const ACTIVE_JOB_KEY = 'hapl.catalog_seed.active_job_id';
 
 type SeedMode = 'small' | 'large' | 'wide' | 'deep' | 'provider-targeted';
 type ProviderSlug = 'all' | 'netflix' | 'amazon-prime-video' | 'max' | 'disney-plus' | 'mubi' | 'tv-plus';
@@ -82,103 +86,136 @@ export function CatalogSeedPanel() {
   const [depth, setDepth] = useState<Depth>('standard');
   const [progress, setProgress] = useState<{ chunks: number; processed: number; total: number } | null>(null);
   const [totalElapsedMs, setTotalElapsedMs] = useState(0);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [interrupted, setInterrupted] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const isProviderMode = mode === 'provider-targeted';
   const isSinglePlatform = isProviderMode && providerSlug !== 'all';
   const fullDisabled = !isSinglePlatform;
 
-  const runSeed = async () => {
+  // Restore last interrupted job from localStorage
+  useEffect(() => {
+    const saved = localStorage.getItem(ACTIVE_JOB_KEY);
+    if (saved) setActiveJobId(saved);
+  }, []);
+
+  const drive = async (initialBody: any, label: string) => {
     setRunning(true);
+    setInterrupted(false);
+    setErrorMsg(null);
     setLastResult(null);
     setProgress(null);
     setTotalElapsedMs(0);
 
-    let initialParams: any;
-    if (mode === 'small') {
-      initialParams = { pages_primary: 1, pages_secondary: 1, pages_docs: 1, vote_floor: 20 };
-    } else if (mode === 'large') {
-      initialParams = { pages_primary: 3, pages_secondary: 2, pages_docs: 2, vote_floor: 20 };
-    } else if (mode === 'wide') {
-      initialParams = { pages_primary: 8, pages_secondary: 5, pages_docs: 4, vote_floor: 15 };
-    } else if (mode === 'deep') {
-      initialParams = {
-        mode: 'deep',
-        pages_per_strategy: 5,
-        pages_docs_per_strategy: 3,
-        vote_count_floor: 15,
-        vote_average_floor: 7.0,
-        strategies: ['popularity', 'vote_count', 'vote_average', 'recent'],
-        recent_year_from: 2022,
-      };
-    } else {
-      // provider-targeted
-      const allSlugs = PROVIDER_OPTIONS.filter((p) => p.slug !== 'all').map((p) => p.slug);
-      const providers = providerSlug === 'all' ? allSlugs : [providerSlug];
-
-      if (depth === 'full' && isSinglePlatform) {
-        initialParams = {
-          mode: 'provider-full',
-          providers,
-          provider: providerSlug,
-          vote_count_floor: 10,
-          vote_average_floor: 6.5,
-          strategies: ['popularity', 'vote_count', 'vote_average', 'recent'],
-          recent_year_from: 2022,
-          max_pages_per_strategy: 500,
-        };
-      } else {
-        initialParams = {
-          mode: 'provider-targeted',
-          pages_per_strategy: 5,
-          vote_count_floor: 10,
-          vote_average_floor: 6.5,
-          strategies: ['popularity', 'vote_count', 'vote_average', 'recent'],
-          recent_year_from: 2022,
-          providers,
-        };
-      }
-    }
-
-    const label = isProviderMode
-      ? `Platform Bazlı (${providerSlug === 'all' ? 'Tümü' : providerSlug}${depth === 'full' ? ' · Tüm TMDB Sonuçları' : ''})`
-      : mode;
     toast.info(`Keşif başlatıldı: ${label}. Sayfada kalın…`);
 
-    try {
-      let cursor: any = null;
-      let chunkCount = 0;
-      let lastChunk: ChunkResponse | null = null;
-      const t0 = Date.now();
+    let chunkCount = 0;
+    let lastChunk: ChunkResponse | null = null;
+    const t0 = Date.now();
+    let body: any = initialBody;
 
+    try {
       while (chunkCount < MAX_CHUNKS) {
-        const body = cursor ? { cursor } : initialParams;
         const { data, error } = await supabase.functions.invoke('hapl-seed-catalog', { body });
         if (error) throw error;
         const chunk = data as ChunkResponse;
         chunkCount++;
         lastChunk = chunk;
 
+        if (chunk.job_id) {
+          setActiveJobId(chunk.job_id);
+          localStorage.setItem(ACTIVE_JOB_KEY, chunk.job_id);
+        }
+
         setProgress({ chunks: chunkCount, processed: chunk.processed_jobs, total: chunk.plan_total });
         setLastResult(chunk);
         setTotalElapsedMs(Date.now() - t0);
 
+        if (chunk.status === 'failed' || !chunk.ok) {
+          throw new Error(chunk.error || 'Backend "failed" status döndü');
+        }
         if (chunk.done) break;
-        cursor = chunk.next_cursor;
-        if (!cursor) break;
+
+        // Continue via job_id (preferred) — falls back to in-memory cursor
+        if (chunk.job_id) {
+          body = { job_id: chunk.job_id, resume: true };
+        } else if (chunk.next_cursor) {
+          body = { cursor: chunk.next_cursor };
+        } else {
+          break;
+        }
       }
 
       if (lastChunk?.done) {
+        localStorage.removeItem(ACTIVE_JOB_KEY);
+        setActiveJobId(null);
         toast.success(
-          `Seed tamamlandı (${chunkCount} chunk): ${lastChunk.stats.titles_upserted} içerik, ${lastChunk.stats.availability_rows} platform kaydı`
+          `Seed tamamlandı (${chunkCount} chunk): ${lastChunk.stats.titles_upserted} içerik, ${lastChunk.stats.availability_rows} platform kaydı`,
         );
       } else {
-        toast.warning(`Seed ${chunkCount} chunk'tan sonra durdu, tamamlanmadı.`);
+        setInterrupted(true);
+        toast.warning(`Seed ${chunkCount} chunk'tan sonra durdu.`);
       }
     } catch (e: any) {
-      toast.error('Seed hatası: ' + (e.message || 'Bilinmeyen hata'));
+      const msg = e?.message || 'Bilinmeyen hata';
+      setErrorMsg(msg);
+      setInterrupted(true);
+      toast.error('Keşif yarıda kesildi: ' + msg);
     } finally {
       setRunning(false);
     }
+  };
+
+  const buildInitialBody = () => {
+    if (mode === 'small') return { pages_primary: 1, pages_secondary: 1, pages_docs: 1, vote_floor: 20 };
+    if (mode === 'large') return { pages_primary: 3, pages_secondary: 2, pages_docs: 2, vote_floor: 20 };
+    if (mode === 'wide')  return { pages_primary: 8, pages_secondary: 5, pages_docs: 4, vote_floor: 15 };
+    if (mode === 'deep') {
+      return {
+        mode: 'deep', pages_per_strategy: 5, pages_docs_per_strategy: 3,
+        vote_count_floor: 15, vote_average_floor: 7.0,
+        strategies: ['popularity', 'vote_count', 'vote_average', 'recent'],
+        recent_year_from: 2022,
+      };
+    }
+    const allSlugs = PROVIDER_OPTIONS.filter((p) => p.slug !== 'all').map((p) => p.slug);
+    const providers = providerSlug === 'all' ? allSlugs : [providerSlug];
+    if (depth === 'full' && isSinglePlatform) {
+      return {
+        mode: 'provider-full', providers, provider: providerSlug,
+        vote_count_floor: 10, vote_average_floor: 6.5,
+        strategies: ['popularity', 'vote_count', 'vote_average', 'recent'],
+        recent_year_from: 2022, max_pages_per_strategy: 500,
+      };
+    }
+    return {
+      mode: 'provider-targeted', pages_per_strategy: 5,
+      vote_count_floor: 10, vote_average_floor: 6.5,
+      strategies: ['popularity', 'vote_count', 'vote_average', 'recent'],
+      recent_year_from: 2022, providers,
+    };
+  };
+
+  const runSeed = async () => {
+    const label = isProviderMode
+      ? `Platform Bazlı (${providerSlug === 'all' ? 'Tümü' : providerSlug}${depth === 'full' ? ' · Tüm TMDB Sonuçları' : ''})`
+      : mode;
+    await drive(buildInitialBody(), label);
+  };
+
+  const resumeJob = async () => {
+    if (!activeJobId) return;
+    await drive({ job_id: activeJobId, resume: true }, `Devam: ${activeJobId.slice(0, 8)}`);
+  };
+
+  const discardJob = () => {
+    localStorage.removeItem(ACTIVE_JOB_KEY);
+    setActiveJobId(null);
+    setInterrupted(false);
+    setErrorMsg(null);
+    setLastResult(null);
+    toast.info('Yarım kalan iş atıldı.');
   };
 
   return (
@@ -189,8 +226,32 @@ export function CatalogSeedPanel() {
       </div>
       <p className="text-xs text-muted-foreground leading-relaxed">
         TMDB'den TR'de izlenebilir içerikleri keşfedip Hapl katalog veritabanına yazar.
-        Büyük mod, timeout'tan kaçınmak için chunk'lara bölünür.
+        Job/chunk mimarisi sayesinde yarıda kesilirse "Devam Et" ile aynı yerden sürebilir.
       </p>
+
+      {(activeJobId && !running) && (
+        <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 space-y-2 text-xs">
+          <div className="flex items-center gap-2 font-bold text-destructive">
+            <AlertTriangle className="h-3.5 w-3.5" />
+            {interrupted ? 'Keşif yarıda kesildi' : 'Yarım kalan iş bulundu'}
+          </div>
+          <div className="text-muted-foreground">
+            Job: <span className="font-mono text-foreground">{activeJobId.slice(0, 8)}…</span>
+            {lastResult && (
+              <> · Son başarılı chunk: <span className="text-foreground">{lastResult.processed_jobs} / {lastResult.plan_total}</span></>
+            )}
+          </div>
+          {errorMsg && <div className="text-destructive/90 break-all">{errorMsg}</div>}
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" onClick={resumeJob} disabled={running} className="gap-1 h-8 text-xs">
+              <Play className="h-3 w-3" /> Devam Et
+            </Button>
+            <Button size="sm" variant="outline" onClick={discardJob} disabled={running} className="gap-1 h-8 text-xs">
+              <RotateCw className="h-3 w-3" /> Baştan Başlat
+            </Button>
+          </div>
+        </div>
+      )}
 
       <div className="flex flex-wrap gap-2">
         <Button variant={mode === 'small' ? 'default' : 'outline'} size="sm" onClick={() => setMode('small')} disabled={running}>
@@ -305,7 +366,20 @@ export function CatalogSeedPanel() {
 
       {lastResult && (
         <div className="rounded-lg bg-secondary/40 p-3 space-y-2 text-xs">
-          <div className="font-bold text-foreground">{lastResult.done ? 'Sonuç' : 'Ara sonuç'}</div>
+          <div className="flex items-center justify-between">
+            <div className="font-bold text-foreground">
+              {lastResult.done ? 'Sonuç' : (lastResult.status === 'failed' ? 'Hata' : 'Ara sonuç')}
+            </div>
+            {lastResult.status && (
+              <span className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded ${
+                lastResult.status === 'completed' ? 'bg-primary/20 text-primary' :
+                lastResult.status === 'failed' ? 'bg-destructive/20 text-destructive' :
+                'bg-muted text-muted-foreground'
+              }`}>
+                {lastResult.status}
+              </span>
+            )}
+          </div>
           {isProviderMode && (
             <div className="text-[11px] text-muted-foreground">
               Seçili platform: <span className="text-foreground font-medium">{providerSlug}</span>

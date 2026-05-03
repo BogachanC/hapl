@@ -215,6 +215,8 @@ async function processOne(
     }
     stats.titles_upserted++;
     src.titles_upserted++;
+    const kind = titleRow.content_kind || "unknown";
+    stats.kind_counts[kind] = (stats.kind_counts[kind] || 0) + 1;
     const titleId = titleData.id;
 
     const availRows: any[] = [];

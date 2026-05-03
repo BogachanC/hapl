@@ -97,7 +97,9 @@ interface SeedStats {
   errors: number;
   skipped_no_poster: number;
   skipped_no_tr_availability: number;
+  skipped_provider_unverified: number;
   kind_counts: Record<string, number>;
+  provider_counts: Record<string, number>;
 }
 
 interface SourceStats {

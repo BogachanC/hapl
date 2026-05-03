@@ -90,8 +90,13 @@ function deriveContentKind(
 
 interface SeedStats {
   discovered: number;
-  titles_upserted: number;
-  availability_rows: number;
+  titles_processed: number;        // total titles we touched (new + existing)
+  titles_new: number;              // first-time inserts
+  titles_existing: number;         // already existed, refreshed
+  titles_upserted: number;         // back-compat: == titles_processed
+  availability_rows: number;       // total rows written (new + updated)
+  availability_new: number;
+  availability_existing: number;
   aliases_added: number;
   aliases_skipped_cached: number;
   errors: number;
@@ -100,6 +105,27 @@ interface SeedStats {
   skipped_provider_unverified: number;
   kind_counts: Record<string, number>;
   provider_counts: Record<string, number>;
+}
+
+interface Baseline {
+  target_slug: string | null;
+  target_provider_id: string | null;
+  titles_total_before: number;
+  target_avail_before: number;
+  target_available_titles_before: number;
+}
+
+interface CoverageDelta {
+  target_slug: string;
+  titles_total_before: number;
+  titles_total_after: number;
+  titles_total_delta: number;
+  target_avail_before: number;
+  target_avail_after: number;
+  target_avail_delta: number;
+  target_available_titles_before: number;
+  target_available_titles_after: number;
+  target_available_titles_delta: number;
 }
 
 interface SourceStats {
@@ -137,6 +163,7 @@ interface Cursor {
   vote_floor: number;
   stats: SeedStats;
   sources: Record<string, SourceStats>;
+  baseline?: Baseline;
 }
 
 function buildPlan(
@@ -391,6 +418,15 @@ async function processOne(
       last_full_sync_at: now,
     };
 
+    // Detect new vs existing for accurate metrics
+    const { data: existingTitle } = await sb
+      .from("content_titles")
+      .select("id")
+      .eq("tmdb_id", detail.id)
+      .eq("tmdb_type", item.media_type)
+      .maybeSingle();
+    const wasNewTitle = !existingTitle;
+
     const { data: titleData, error: titleErr } = await sb
       .from("content_titles")
       .upsert(titleRow, { onConflict: "tmdb_id,tmdb_type" })
@@ -401,7 +437,9 @@ async function processOne(
       stats.errors++;
       return;
     }
+    stats.titles_processed++;
     stats.titles_upserted++;
+    if (wasNewTitle) stats.titles_new++; else stats.titles_existing++;
     src.titles_upserted++;
     const kind = titleRow.content_kind || "unknown";
     stats.kind_counts[kind] = (stats.kind_counts[kind] || 0) + 1;
@@ -440,6 +478,19 @@ async function processOne(
         }
       }
       if (availRows.length > 0) {
+        // Detect existing rows for new vs updated metric
+        const { data: existingAvail } = await sb
+          .from("content_availability")
+          .select("provider_id, availability_type")
+          .eq("title_id", titleId)
+          .eq("region", "TR")
+          .in("provider_id", Array.from(new Set(availRows.map((r) => r.provider_id))));
+        const existingKeys = new Set(
+          (existingAvail || []).map((r: any) => `${r.provider_id}::${r.availability_type}`),
+        );
+        const newCount = availRows.filter((r) => !existingKeys.has(`${r.provider_id}::${r.availability_type}`)).length;
+        const existingCount = availRows.length - newCount;
+
         const { error: availErr } = await sb
           .from("content_availability")
           .upsert(availRows, { onConflict: "title_id,provider_id,region,availability_type" });
@@ -448,6 +499,8 @@ async function processOne(
           stats.errors++;
         } else {
           stats.availability_rows += availRows.length;
+          stats.availability_new += newCount;
+          stats.availability_existing += existingCount;
           src.availability_rows += availRows.length;
         }
       }
@@ -569,6 +622,11 @@ serve(async (req: Request) => {
     if (typeof cursor.stats.skipped_no_poster !== "number") cursor.stats.skipped_no_poster = 0;
     if (typeof cursor.stats.skipped_no_tr_availability !== "number") cursor.stats.skipped_no_tr_availability = 0;
     if (typeof cursor.stats.skipped_provider_unverified !== "number") cursor.stats.skipped_provider_unverified = 0;
+    if (typeof cursor.stats.titles_processed !== "number") cursor.stats.titles_processed = cursor.stats.titles_upserted ?? 0;
+    if (typeof cursor.stats.titles_new !== "number") cursor.stats.titles_new = 0;
+    if (typeof cursor.stats.titles_existing !== "number") cursor.stats.titles_existing = 0;
+    if (typeof cursor.stats.availability_new !== "number") cursor.stats.availability_new = 0;
+    if (typeof cursor.stats.availability_existing !== "number") cursor.stats.availability_existing = 0;
   } else {
     const voteFloor = Math.max(0, body.vote_floor ?? DEFAULT_VOTE_FLOOR);
     const providersFilter: string[] | null = Array.isArray(body.providers) && body.providers.length > 0
@@ -672,7 +730,10 @@ serve(async (req: Request) => {
       job_index: 0,
       vote_floor: voteFloor,
       stats: {
-        discovered: 0, titles_upserted: 0, availability_rows: 0,
+        discovered: 0,
+        titles_processed: 0, titles_new: 0, titles_existing: 0,
+        titles_upserted: 0,
+        availability_rows: 0, availability_new: 0, availability_existing: 0,
         aliases_added: 0, aliases_skipped_cached: 0, errors: 0,
         skipped_no_poster: 0, skipped_no_tr_availability: 0,
         skipped_provider_unverified: 0,
@@ -681,6 +742,41 @@ serve(async (req: Request) => {
       },
       sources: {},
     };
+
+    // Baseline coverage for delta reporting (single-provider modes)
+    let baselineSlug: string | null = null;
+    if ((body.mode === "provider-full" || body.mode === "provider-targeted")
+        && providersFilter && providersFilter.length === 1) {
+      baselineSlug = providersFilter[0];
+    }
+    const baseline: Baseline = {
+      target_slug: baselineSlug,
+      target_provider_id: null,
+      titles_total_before: 0,
+      target_avail_before: 0,
+      target_available_titles_before: 0,
+    };
+    try {
+      const totalQ = await sb.from("content_titles").select("id", { count: "exact", head: true });
+      baseline.titles_total_before = totalQ.count ?? 0;
+      if (baselineSlug) {
+        const prov = providers.find((p) => p.slug === baselineSlug);
+        if (prov) {
+          baseline.target_provider_id = prov.id;
+          const availQ = await sb
+            .from("content_availability")
+            .select("title_id", { count: "exact", head: true })
+            .eq("provider_id", prov.id)
+            .eq("region", "TR")
+            .eq("status", "available");
+          baseline.target_avail_before = availQ.count ?? 0;
+          baseline.target_available_titles_before = availQ.count ?? 0;
+        }
+      }
+    } catch (e) {
+      console.warn("[seed] baseline capture failed:", (e as Error).message);
+    }
+    cursor.baseline = baseline;
   }
 
   const t0 = Date.now();
@@ -705,6 +801,40 @@ serve(async (req: Request) => {
   const done = cursor.job_index >= cursor.jobs.length;
   const elapsed_ms = Date.now() - t0;
 
+  // On completion, compute coverage delta if baseline was captured
+  let coverage_delta: CoverageDelta | null = null;
+  if (done && cursor.baseline) {
+    try {
+      const b = cursor.baseline;
+      const totalAfterQ = await sb.from("content_titles").select("id", { count: "exact", head: true });
+      const titlesTotalAfter = totalAfterQ.count ?? 0;
+      let availAfter = b.target_avail_before;
+      if (b.target_provider_id) {
+        const aQ = await sb
+          .from("content_availability")
+          .select("title_id", { count: "exact", head: true })
+          .eq("provider_id", b.target_provider_id)
+          .eq("region", "TR")
+          .eq("status", "available");
+        availAfter = aQ.count ?? 0;
+      }
+      coverage_delta = {
+        target_slug: b.target_slug ?? "all",
+        titles_total_before: b.titles_total_before,
+        titles_total_after: titlesTotalAfter,
+        titles_total_delta: titlesTotalAfter - b.titles_total_before,
+        target_avail_before: b.target_avail_before,
+        target_avail_after: availAfter,
+        target_avail_delta: availAfter - b.target_avail_before,
+        target_available_titles_before: b.target_available_titles_before,
+        target_available_titles_after: availAfter,
+        target_available_titles_delta: availAfter - b.target_available_titles_before,
+      };
+    } catch (e) {
+      console.warn("[seed] coverage delta failed:", (e as Error).message);
+    }
+  }
+
   return new Response(
     JSON.stringify({
       ok: true,
@@ -716,6 +846,7 @@ serve(async (req: Request) => {
       job_index_start: startIndex,
       stats: cursor.stats,
       sources: Object.values(cursor.sources),
+      coverage_delta,
       elapsed_ms,
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } },

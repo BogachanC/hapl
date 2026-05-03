@@ -801,6 +801,40 @@ serve(async (req: Request) => {
   const done = cursor.job_index >= cursor.jobs.length;
   const elapsed_ms = Date.now() - t0;
 
+  // On completion, compute coverage delta if baseline was captured
+  let coverage_delta: CoverageDelta | null = null;
+  if (done && cursor.baseline) {
+    try {
+      const b = cursor.baseline;
+      const totalAfterQ = await sb.from("content_titles").select("id", { count: "exact", head: true });
+      const titlesTotalAfter = totalAfterQ.count ?? 0;
+      let availAfter = b.target_avail_before;
+      if (b.target_provider_id) {
+        const aQ = await sb
+          .from("content_availability")
+          .select("title_id", { count: "exact", head: true })
+          .eq("provider_id", b.target_provider_id)
+          .eq("region", "TR")
+          .eq("status", "available");
+        availAfter = aQ.count ?? 0;
+      }
+      coverage_delta = {
+        target_slug: b.target_slug ?? "all",
+        titles_total_before: b.titles_total_before,
+        titles_total_after: titlesTotalAfter,
+        titles_total_delta: titlesTotalAfter - b.titles_total_before,
+        target_avail_before: b.target_avail_before,
+        target_avail_after: availAfter,
+        target_avail_delta: availAfter - b.target_avail_before,
+        target_available_titles_before: b.target_available_titles_before,
+        target_available_titles_after: availAfter,
+        target_available_titles_delta: availAfter - b.target_available_titles_before,
+      };
+    } catch (e) {
+      console.warn("[seed] coverage delta failed:", (e as Error).message);
+    }
+  }
+
   return new Response(
     JSON.stringify({
       ok: true,
@@ -812,6 +846,7 @@ serve(async (req: Request) => {
       job_index_start: startIndex,
       stats: cursor.stats,
       sources: Object.values(cursor.sources),
+      coverage_delta,
       elapsed_ms,
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } },

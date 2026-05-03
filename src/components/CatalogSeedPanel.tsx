@@ -11,6 +11,8 @@ interface SeedStats {
   aliases_added: number;
   aliases_skipped_cached?: number;
   errors: number;
+  skipped_no_poster?: number;
+  skipped_no_tr_availability?: number;
   kind_counts?: Record<string, number>;
 }
 

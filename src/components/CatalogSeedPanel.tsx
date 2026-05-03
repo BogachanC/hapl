@@ -193,6 +193,19 @@ export function CatalogSeedPanel() {
               </div>
             </>
           )}
+          {lastResult.stats.kind_counts && Object.keys(lastResult.stats.kind_counts).length > 0 && (
+            <>
+              <div className="font-bold text-foreground pt-2">Kategori dağılımı</div>
+              <div className="space-y-1">
+                {Object.entries(lastResult.stats.kind_counts).map(([k, v]) => (
+                  <div key={k} className="flex justify-between text-muted-foreground">
+                    <span className="font-medium text-foreground">{k}</span>
+                    <span>{v}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

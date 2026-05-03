@@ -657,8 +657,48 @@ serve(async (req: Request) => {
   let cursor: Cursor;
   let jobId: string | null = typeof body.job_id === "string" ? body.job_id : null;
   const action: string = typeof body.action === "string" ? body.action : "";
+  if (action === "status") {
+    if (!jobId) {
+      return new Response(JSON.stringify({ ok: false, error: "job_id required" }), {
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const { data: jobRow, error: jobErr } = await sb
+      .from("catalog_seed_jobs")
+      .select("*")
+      .eq("id", jobId)
+      .maybeSingle();
+    if (jobErr || !jobRow) {
+      return new Response(JSON.stringify({ ok: false, error: "job not found" }), {
+        status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({ ok: true, job: jobToSummary(jobRow) }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  if (action === "latest_incomplete") {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data: jobRow, error: jobErr } = await sb
+      .from("catalog_seed_jobs")
+      .select("*")
+      .neq("status", "completed")
+      .gte("created_at", since)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (jobErr) {
+      return new Response(JSON.stringify({ ok: false, error: jobErr.message }), {
+        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({ ok: true, job: jobRow ? jobToSummary(jobRow) : null }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
   const isResume = (action === "continue" || !!body.resume) && !!jobId;
-  const isPrepare = action === "prepare";
+  const isStart = action === "start" || action === "prepare";
 
   if (isResume) {
     const { data: jobRow, error: jobErr } = await sb

@@ -162,8 +162,13 @@ export function CatalogSeedPanel() {
     const total = job.plan_total ?? job.total_pages ?? 0;
     setProgress({ chunks: 0, processed, total });
     setLastResult(resultFromJob(job));
+    setActiveJobStale(!!job.is_stale);
     setInterrupted(markInterrupted || job.status !== 'completed');
-    setErrorMsg(job.last_error || (job.status === 'running' ? CONNECTION_ERROR_MESSAGE : null));
+    setErrorMsg(
+      job.last_error ||
+      (job.is_stale ? 'Önceki katalog işi stale durumda kaldı (heartbeat 10 dk üzeri).' :
+       (job.status === 'running' ? CONNECTION_ERROR_MESSAGE : null))
+    );
   };
 
   const invokeSeedFunction = async (action: string, body: Record<string, any>) => {

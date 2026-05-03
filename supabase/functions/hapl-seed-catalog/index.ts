@@ -97,7 +97,9 @@ interface SeedStats {
   errors: number;
   skipped_no_poster: number;
   skipped_no_tr_availability: number;
+  skipped_provider_unverified: number;
   kind_counts: Record<string, number>;
+  provider_counts: Record<string, number>;
 }
 
 interface SourceStats {
@@ -123,6 +125,9 @@ interface Job {
   release_date_gte?: string;
   release_date_lte?: string;
   with_original_language?: string;
+  // Provider-targeted sweep: require this TMDB provider_id to appear in
+  // the title's TR /watch/providers result. If not, skip availability write.
+  verify_tmdb_provider_id?: number;
 }
 
 interface Cursor {
@@ -250,6 +255,66 @@ function buildDeepPlan(cfg: DeepConfig, providersFilter: string[] | null): Job[]
   return jobs;
 }
 
+// ─── Provider-targeted sweep ───────────────────────────────────────────
+// For a fixed allow-list of TR providers, run multi-strategy discover and
+// require TMDB /watch/providers TR to actually contain the provider before
+// writing availability rows. Title-only upsert still happens for unverified.
+const PROVIDER_TARGETED_ALLOWED = new Set([
+  "netflix", "amazon-prime-video", "max", "disney-plus", "mubi", "tv-plus",
+]);
+
+interface ProviderTargetedConfig {
+  pages_per_strategy: number;
+  vote_count_floor: number;
+  vote_average_floor: number;
+  strategies: Array<"popularity" | "vote_average" | "vote_count" | "recent">;
+  recent_year_from: number;
+  providers?: string[]; // optional sub-filter
+}
+
+function buildProviderTargetedPlan(cfg: ProviderTargetedConfig): Job[] {
+  const jobs: Job[] = [];
+  const recentGte = `${cfg.recent_year_from}-01-01`;
+  const filter = cfg.providers && cfg.providers.length > 0
+    ? new Set(cfg.providers.filter((s) => PROVIDER_TARGETED_ALLOWED.has(s)))
+    : PROVIDER_TARGETED_ALLOWED;
+
+  for (const p of TMDB_PROVIDERS_TR) {
+    if (!filter.has(p.slug)) continue;
+    for (const type of ["movie", "tv"] as const) {
+      for (const strat of cfg.strategies) {
+        for (let page = 1; page <= cfg.pages_per_strategy; page++) {
+          const job: Job = {
+            source: `pt:${p.slug}:${strat}`,
+            type,
+            page,
+            tmdb_provider_id: p.tmdb_id,
+            verify_tmdb_provider_id: p.tmdb_id,
+            strategy: strat,
+          };
+          if (strat === "popularity") {
+            job.sort_by = "popularity.desc";
+            job.vote_count_gte = cfg.vote_count_floor;
+          } else if (strat === "vote_average") {
+            job.sort_by = "vote_average.desc";
+            job.vote_count_gte = Math.max(cfg.vote_count_floor, 50);
+            job.vote_average_gte = cfg.vote_average_floor;
+          } else if (strat === "vote_count") {
+            job.sort_by = "vote_count.desc";
+            job.vote_count_gte = cfg.vote_count_floor;
+          } else if (strat === "recent") {
+            job.sort_by = type === "movie" ? "primary_release_date.desc" : "first_air_date.desc";
+            job.vote_count_gte = Math.max(5, Math.floor(cfg.vote_count_floor / 2));
+            job.release_date_gte = recentGte;
+          }
+          jobs.push(job);
+        }
+      }
+    }
+  }
+  return jobs;
+}
+
 function emptySource(name: string): SourceStats {
   return {
     source: name,
@@ -267,6 +332,7 @@ async function processOne(
   providers: ProviderRow[],
   stats: SeedStats,
   src: SourceStats,
+  verifyTmdbProviderId?: number,
 ): Promise<void> {
   try {
     const [detail, watch] = await Promise.all([
@@ -281,6 +347,24 @@ async function processOne(
     if (!detail.poster_path) {
       stats.skipped_no_poster++;
       return;
+    }
+
+    // Provider-targeted verification: ensure target provider truly appears
+    // in TR watch/providers (any bucket). If not, skip availability write
+    // entirely — but still upsert the title (it's a valid TR-visible title).
+    let providerVerified = true;
+    if (typeof verifyTmdbProviderId === "number") {
+      const allBuckets = [
+        ...(watch.flatrate || []),
+        ...(watch.free || []),
+        ...(watch.ads || []),
+        ...(watch.rent || []),
+        ...(watch.buy || []),
+      ];
+      providerVerified = allBuckets.some((wp: any) => wp.provider_id === verifyTmdbProviderId);
+      if (!providerVerified) {
+        stats.skipped_provider_unverified++;
+      }
     }
 
     const now = new Date().toISOString();
@@ -323,46 +407,49 @@ async function processOne(
     stats.kind_counts[kind] = (stats.kind_counts[kind] || 0) + 1;
     const titleId = titleData.id;
 
-    const availRows: any[] = [];
-    const buckets: Array<{ type: string; list: any[] }> = [
-      { type: "stream", list: watch.flatrate },
-      { type: "free",   list: watch.free },
-      { type: "ads",    list: watch.ads },
-      { type: "rent",   list: watch.rent },
-      { type: "buy",    list: watch.buy },
-    ];
-    const seenKey = new Set<string>();
-    for (const bucket of buckets) {
-      for (const wp of bucket.list || []) {
-        const matched = matchTmdbProvider(wp.provider_name, providers);
-        if (!matched) continue;
-        const k = `${matched.id}::${bucket.type}`;
-        if (seenKey.has(k)) continue;
-        seenKey.add(k);
-        availRows.push({
-          title_id: titleId,
-          provider_id: matched.id,
-          region: "TR",
-          availability_type: bucket.type,
-          status: "available",
-          source: "tmdb",
-          confidence: tmdbConfidenceFor(bucket.type),
-          checked_at: now,
-          last_seen_at: now,
-          raw_payload: { provider_id: wp.provider_id, provider_name: wp.provider_name },
-        });
+    if (providerVerified) {
+      const availRows: any[] = [];
+      const buckets: Array<{ type: string; list: any[] }> = [
+        { type: "stream", list: watch.flatrate },
+        { type: "free",   list: watch.free },
+        { type: "ads",    list: watch.ads },
+        { type: "rent",   list: watch.rent },
+        { type: "buy",    list: watch.buy },
+      ];
+      const seenKey = new Set<string>();
+      for (const bucket of buckets) {
+        for (const wp of bucket.list || []) {
+          const matched = matchTmdbProvider(wp.provider_name, providers);
+          if (!matched) continue;
+          const k = `${matched.id}::${bucket.type}`;
+          if (seenKey.has(k)) continue;
+          seenKey.add(k);
+          availRows.push({
+            title_id: titleId,
+            provider_id: matched.id,
+            region: "TR",
+            availability_type: bucket.type,
+            status: "available",
+            source: "tmdb",
+            confidence: tmdbConfidenceFor(bucket.type),
+            checked_at: now,
+            last_seen_at: now,
+            raw_payload: { provider_id: wp.provider_id, provider_name: wp.provider_name },
+          });
+          stats.provider_counts[matched.slug] = (stats.provider_counts[matched.slug] || 0) + 1;
+        }
       }
-    }
-    if (availRows.length > 0) {
-      const { error: availErr } = await sb
-        .from("content_availability")
-        .upsert(availRows, { onConflict: "title_id,provider_id,region,availability_type" });
-      if (availErr) {
-        console.error("[seed] availability upsert failed:", availErr.message);
-        stats.errors++;
-      } else {
-        stats.availability_rows += availRows.length;
-        src.availability_rows += availRows.length;
+      if (availRows.length > 0) {
+        const { error: availErr } = await sb
+          .from("content_availability")
+          .upsert(availRows, { onConflict: "title_id,provider_id,region,availability_type" });
+        if (availErr) {
+          console.error("[seed] availability upsert failed:", availErr.message);
+          stats.errors++;
+        } else {
+          stats.availability_rows += availRows.length;
+          src.availability_rows += availRows.length;
+        }
       }
     }
 
@@ -409,7 +496,7 @@ async function runJob(
       stats.skipped_no_poster++;
       continue;
     }
-    await processOne(sb, item, providers, stats, src);
+    await processOne(sb, item, providers, stats, src, job.verify_tmdb_provider_id);
   }
 }
 
@@ -478,8 +565,10 @@ serve(async (req: Request) => {
   if (body.cursor && typeof body.cursor === "object" && Array.isArray(body.cursor.jobs)) {
     cursor = body.cursor as Cursor;
     if (!cursor.stats.kind_counts) cursor.stats.kind_counts = {};
+    if (!cursor.stats.provider_counts) cursor.stats.provider_counts = {};
     if (typeof cursor.stats.skipped_no_poster !== "number") cursor.stats.skipped_no_poster = 0;
     if (typeof cursor.stats.skipped_no_tr_availability !== "number") cursor.stats.skipped_no_tr_availability = 0;
+    if (typeof cursor.stats.skipped_provider_unverified !== "number") cursor.stats.skipped_provider_unverified = 0;
   } else {
     const voteFloor = Math.max(0, body.vote_floor ?? DEFAULT_VOTE_FLOOR);
     const providersFilter: string[] | null = Array.isArray(body.providers) && body.providers.length > 0
@@ -498,6 +587,18 @@ serve(async (req: Request) => {
         recent_year_from: body.recent_year_from ?? 2022,
       };
       jobs = buildDeepPlan(cfg, providersFilter);
+    } else if (body.mode === "provider-targeted") {
+      const cfg: ProviderTargetedConfig = {
+        pages_per_strategy: Math.max(1, Math.min(20, body.pages_per_strategy ?? 5)),
+        vote_count_floor: Math.max(0, body.vote_count_floor ?? 10),
+        vote_average_floor: Math.max(0, body.vote_average_floor ?? 6.5),
+        strategies: Array.isArray(body.strategies) && body.strategies.length > 0
+          ? body.strategies
+          : ["popularity", "vote_count", "vote_average", "recent"],
+        recent_year_from: body.recent_year_from ?? 2022,
+        providers: providersFilter ?? undefined,
+      };
+      jobs = buildProviderTargetedPlan(cfg);
     } else {
       const pagesPrimary = Math.max(0, Math.min(20, body.pages_primary ?? DEFAULT_PAGES_PRIMARY));
       const pagesSecondary = Math.max(0, Math.min(20, body.pages_secondary ?? DEFAULT_PAGES_SECONDARY));
@@ -514,7 +615,9 @@ serve(async (req: Request) => {
         discovered: 0, titles_upserted: 0, availability_rows: 0,
         aliases_added: 0, aliases_skipped_cached: 0, errors: 0,
         skipped_no_poster: 0, skipped_no_tr_availability: 0,
+        skipped_provider_unverified: 0,
         kind_counts: {},
+        provider_counts: {},
       },
       sources: {},
     };

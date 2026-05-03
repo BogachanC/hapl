@@ -13,7 +13,9 @@ interface SeedStats {
   errors: number;
   skipped_no_poster?: number;
   skipped_no_tr_availability?: number;
+  skipped_provider_unverified?: number;
   kind_counts?: Record<string, number>;
+  provider_counts?: Record<string, number>;
 }
 
 interface SourceStats {
@@ -39,7 +41,7 @@ interface ChunkResponse {
 
 const MAX_CHUNKS = 200; // safety cap (deep mode may need many chunks)
 
-type SeedMode = 'small' | 'large' | 'wide' | 'deep';
+type SeedMode = 'small' | 'large' | 'wide' | 'deep' | 'provider-targeted';
 
 export function CatalogSeedPanel() {
   const [running, setRunning] = useState(false);
@@ -61,7 +63,8 @@ export function CatalogSeedPanel() {
         ? { pages_primary: 3, pages_secondary: 2, pages_docs: 2, vote_floor: 20 }
         : mode === 'wide'
         ? { pages_primary: 8, pages_secondary: 5, pages_docs: 4, vote_floor: 15 }
-        : {
+        : mode === 'deep'
+        ? {
             mode: 'deep',
             pages_per_strategy: 5,
             pages_docs_per_strategy: 3,
@@ -69,6 +72,15 @@ export function CatalogSeedPanel() {
             vote_average_floor: 7.0,
             strategies: ['popularity', 'vote_count', 'vote_average', 'recent'],
             recent_year_from: 2022,
+          }
+        : {
+            mode: 'provider-targeted',
+            pages_per_strategy: 5,
+            vote_count_floor: 10,
+            vote_average_floor: 6.5,
+            strategies: ['popularity', 'vote_count', 'vote_average', 'recent'],
+            recent_year_from: 2022,
+            providers: ['netflix', 'amazon-prime-video', 'max', 'disney-plus', 'mubi', 'tv-plus'],
           };
 
     toast.info(
@@ -78,7 +90,9 @@ export function CatalogSeedPanel() {
         ? 'Büyük seed başlatıldı (~1000 içerik). Birden fazla chunk halinde çalışacak…'
         : mode === 'wide'
         ? 'Geniş seed başlatıldı (~3000 hedef). Çok sayıda chunk halinde çalışacak, sayfada kalın…'
-        : 'Derin TMDB Expansion başlatıldı (~5000+ hedef). Çoklu strateji, uzun sürebilir, sayfada kalın…'
+        : mode === 'deep'
+        ? 'Derin TMDB Expansion başlatıldı (~5000+ hedef). Çoklu strateji, uzun sürebilir, sayfada kalın…'
+        : 'Platform bazlı TMDB keşfi başlatıldı (Netflix, Prime, Max, Disney+, MUBI, TV+). Sayfada kalın…'
     );
 
     try {
@@ -133,38 +147,21 @@ export function CatalogSeedPanel() {
         Büyük mod, timeout'tan kaçınmak için chunk'lara bölünür.
       </p>
 
-      <div className="flex gap-2">
-        <Button
-          variant={mode === 'small' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => setMode('small')}
-          disabled={running}
-        >
+      <div className="flex flex-wrap gap-2">
+        <Button variant={mode === 'small' ? 'default' : 'outline'} size="sm" onClick={() => setMode('small')} disabled={running}>
           Küçük (~300)
         </Button>
-        <Button
-          variant={mode === 'large' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => setMode('large')}
-          disabled={running}
-        >
+        <Button variant={mode === 'large' ? 'default' : 'outline'} size="sm" onClick={() => setMode('large')} disabled={running}>
           Büyük (~1000)
         </Button>
-        <Button
-          variant={mode === 'wide' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => setMode('wide')}
-          disabled={running}
-        >
+        <Button variant={mode === 'wide' ? 'default' : 'outline'} size="sm" onClick={() => setMode('wide')} disabled={running}>
           Geniş (~3000)
         </Button>
-        <Button
-          variant={mode === 'deep' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => setMode('deep')}
-          disabled={running}
-        >
+        <Button variant={mode === 'deep' ? 'default' : 'outline'} size="sm" onClick={() => setMode('deep')} disabled={running}>
           Derin (~5000+)
+        </Button>
+        <Button variant={mode === 'provider-targeted' ? 'default' : 'outline'} size="sm" onClick={() => setMode('provider-targeted')} disabled={running}>
+          Platform Bazlı (6 platform)
         </Button>
       </div>
 
@@ -203,8 +200,24 @@ export function CatalogSeedPanel() {
             <div>Alias cache hit:</div>    <div className="text-foreground font-medium">{lastResult.stats.aliases_skipped_cached ?? 0}</div>
             <div>Hata:</div>               <div className="text-foreground font-medium">{lastResult.stats.errors}</div>
             <div>Postersiz atlanan:</div>  <div className="text-foreground font-medium">{lastResult.stats.skipped_no_poster ?? 0}</div>
+            <div>Provider doğrulanmadı:</div><div className="text-foreground font-medium">{lastResult.stats.skipped_provider_unverified ?? 0}</div>
             <div>Toplam süre:</div>        <div className="text-foreground font-medium">{(totalElapsedMs / 1000).toFixed(1)}s</div>
           </div>
+          {lastResult.stats.provider_counts && Object.keys(lastResult.stats.provider_counts).length > 0 && (
+            <>
+              <div className="font-bold text-foreground pt-2">Platform dağılımı (availability)</div>
+              <div className="space-y-1">
+                {Object.entries(lastResult.stats.provider_counts)
+                  .sort((a, b) => b[1] - a[1])
+                  .map(([k, v]) => (
+                    <div key={k} className="flex justify-between text-muted-foreground">
+                      <span className="font-medium text-foreground">{k}</span>
+                      <span>{v}</span>
+                    </div>
+                  ))}
+              </div>
+            </>
+          )}
           {lastResult.sources?.length > 0 && (
             <>
               <div className="font-bold text-foreground pt-2">Kaynaklar</div>

@@ -389,11 +389,28 @@ export function CatalogSeedPanel() {
 
   const discardJob = () => {
     clearActiveJob();
+    setActiveJobStale(false);
     setInterrupted(false);
     setErrorMsg(null);
     setDebugInfo(null);
     setLastResult(null);
     toast.info('Yarım kalan iş atıldı.');
+  };
+
+  const markFailedJob = async () => {
+    if (!activeJobId) return;
+    try {
+      await invokeSeedFunction('mark_failed', { job_id: activeJobId, reason: 'manuel kapatıldı (admin panel)' });
+      toast.success('Job failed olarak kapatıldı.');
+      clearActiveJob();
+      setActiveJobStale(false);
+      setInterrupted(false);
+      setErrorMsg(null);
+      setDebugInfo(null);
+      setLastResult(null);
+    } catch (e: any) {
+      toast.error('Failed olarak kapatılamadı: ' + (e?.message || 'bilinmeyen hata'));
+    }
   };
 
   return (

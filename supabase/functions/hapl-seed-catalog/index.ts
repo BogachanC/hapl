@@ -362,9 +362,9 @@ serve(async (req: Request) => {
   if (body.cursor && typeof body.cursor === "object" && Array.isArray(body.cursor.jobs)) {
     cursor = body.cursor as Cursor;
   } else {
-    const pagesPrimary = Math.max(0, Math.min(10, body.pages_primary ?? DEFAULT_PAGES_PRIMARY));
-    const pagesSecondary = Math.max(0, Math.min(10, body.pages_secondary ?? DEFAULT_PAGES_SECONDARY));
-    const pagesDocs = Math.max(0, Math.min(10, body.pages_docs ?? DEFAULT_DOC_PAGES));
+    const pagesPrimary = Math.max(0, Math.min(20, body.pages_primary ?? DEFAULT_PAGES_PRIMARY));
+    const pagesSecondary = Math.max(0, Math.min(20, body.pages_secondary ?? DEFAULT_PAGES_SECONDARY));
+    const pagesDocs = Math.max(0, Math.min(20, body.pages_docs ?? DEFAULT_DOC_PAGES));
     const voteFloor = Math.max(0, body.vote_floor ?? DEFAULT_VOTE_FLOOR);
     const providersFilter: string[] | null = Array.isArray(body.providers) && body.providers.length > 0
       ? body.providers : null;

@@ -82,35 +82,63 @@ function countDomainOccurrences(haystack: string, domain: string): number {
   return matches ? matches.length : 0;
 }
 
+export interface FirecrawlEvidence {
+  /** Optional source URL chosen as primary evidence (must be non-null to persist). */
+  source_url: string | null;
+  /** Structured evidence payload — written into raw_payload. */
+  raw_payload: Record<string, unknown>;
+}
+
 export interface ExtractedProvider {
   provider: ProviderRow;
   confidence: number; // 0..1
   evidence: string[];
+  /** Strong evidence; required for persistence (source_url must be non-null). */
+  source_url: string | null;
+  raw_payload: Record<string, unknown>;
+}
+
+export interface FirecrawlResultLike {
+  url: string;
+  title: string;
+  description: string;
 }
 
 /**
- * Extract provider mentions from free-form text (Firecrawl fallback).
- * Stricter than naive includes():
- * - Word-boundary match (no "max" inside "maximum")
- * - Domains weigh higher than display names
- * - Co-occurrence with TR streaming context boosts confidence
- * - Ambiguous short names (Max, GAIN) require domain OR strong context
- * - Optional `title` parameter: provider mentioned near the title is stronger
+ * Extract provider mentions from Firecrawl search results.
+ * Hard requirements (no exceptions):
+ * - Provider must be firecrawl_enabled
+ * - Provider must NOT be in TMDB_PRIMARY_SLUGS (TMDB is authoritative)
+ * - At least one result MUST contain a matching provider domain in URL or text
+ * - Title token must co-occur in same result (title evidence)
+ * - Returns source_url + raw_payload — caller must NOT persist if source_url is null
  */
 export function extractProvidersFromText(
-  text: string,
+  textOrResults: string | FirecrawlResultLike[],
   providers: ProviderRow[],
   title?: string,
+  results?: FirecrawlResultLike[],
 ): ExtractedProvider[] {
-  if (!text) return [];
-  const t = text.toLowerCase();
+  // Backward-compat: accept (text, providers, title) OR (results, providers, title)
+  const items: FirecrawlResultLike[] = Array.isArray(textOrResults)
+    ? textOrResults
+    : results ?? [];
+  const aggregateText =
+    typeof textOrResults === "string"
+      ? textOrResults
+      : items.map((r) => `${r.title} ${r.description} ${r.url}`).join(" ");
+  if (!aggregateText && items.length === 0) return [];
+  const t = aggregateText.toLowerCase();
   const hasStreamContext =
     /\b(izle|stream|yayin|yayın|platform|abonelik|katalog|izleyebilir|watch)\b/.test(t);
-  const hasTitleContext = title ? t.includes(title.toLowerCase()) : false;
+  const titleLower = title ? title.toLowerCase() : "";
+  const hasTitleContext = titleLower ? t.includes(titleLower) : false;
 
   const out: ExtractedProvider[] = [];
   for (const p of providers) {
     if (!p.firecrawl_enabled) continue;
+    // TMDB-primary global providers: never accepted from Firecrawl gap-fill.
+    if (TMDB_PRIMARY_SLUGS.has(p.slug)) continue;
 
     const evidence: string[] = [];
     let nameHits = 0;
@@ -133,13 +161,24 @@ export function extractProvidersFromText(
         evidence.push(`alias:${alias}(${c})`);
       }
     }
-    // Domains (strong signal)
+    // Domains (strong signal) — also collect per-result evidence URL
+    let evidenceUrl: string | null = null;
+    const matchingResults: FirecrawlResultLike[] = [];
     for (const dom of p.domains) {
       if (!dom || dom.length < 4) continue;
-      const c = countDomainOccurrences(t, dom);
+      const domLower = dom.toLowerCase();
+      const c = countDomainOccurrences(t, domLower);
       if (c > 0) {
         domainHits += c;
         evidence.push(`domain:${dom}(${c})`);
+      }
+      // Per-result inspection: prefer URLs that contain the provider domain
+      for (const r of items) {
+        const blob = `${r.url} ${r.title} ${r.description}`.toLowerCase();
+        if (blob.includes(domLower)) {
+          if (!evidenceUrl && r.url) evidenceUrl = r.url;
+          if (!matchingResults.includes(r)) matchingResults.push(r);
+        }
       }
     }
 
@@ -147,33 +186,46 @@ export function extractProvidersFromText(
 
     // Confidence model
     let conf = 0;
-    if (domainHits > 0) conf += 0.55;          // domain is best evidence
-    if (nameHits >= 2) conf += 0.25;            // multiple name hits
+    if (domainHits > 0) conf += 0.55;
+    if (nameHits >= 2) conf += 0.25;
     else if (nameHits === 1) conf += 0.15;
     if (hasStreamContext) conf += 0.15;
     if (hasTitleContext) conf += 0.15;
     conf = Math.min(1, conf);
 
-    // Ambiguous-name guard: "Max", "GAIN" need domain OR strong context+title
+    // HARD REQUIREMENTS for any Firecrawl persistence:
+    // 1) domain hit (strong evidence)
+    // 2) title co-occurrence (avoid generic listicles)
+    // 3) at least one result URL with the provider domain
+    if (domainHits === 0) continue;
+    if (!hasTitleContext) continue;
+    if (!evidenceUrl) continue;
+
     if (AMBIGUOUS_SLUGS.has(p.slug)) {
-      const ok = domainHits > 0 || (hasStreamContext && hasTitleContext && nameHits >= 1);
-      if (!ok) continue;
       conf = Math.max(conf, 0.55);
     }
-
-    // TMDB-primary global providers: TMDB watch/providers is authoritative.
-    // Free-text mentions (Turkish listicles like "the wire izle netflix.com",
-    // mock streaming sites, IMDb-style "available on …" snippets) are not
-    // reliable enough to override TMDB's silence. Skip these slugs entirely
-    // for Firecrawl gap-fill — they're either covered by TMDB or genuinely
-    // not in TR. This eliminated the The Wire false-positive (Netflix +
-    // Disney+) and is the minimum-blast-radius fix.
-    if (TMDB_PRIMARY_SLUGS.has(p.slug)) continue;
-
-    // Drop low-confidence noise
     if (conf < 0.5) continue;
 
-    out.push({ provider: p, confidence: conf, evidence });
+    const raw_payload = {
+      via: "firecrawl",
+      title_query: title || null,
+      domain_hits: domainHits,
+      name_hits: nameHits,
+      evidence,
+      matched_results: matchingResults.slice(0, 3).map((r) => ({
+        url: r.url,
+        title: r.title,
+      })),
+    };
+
+    out.push({
+      provider: p,
+      confidence: conf,
+      evidence,
+      source_url: evidenceUrl,
+      raw_payload,
+    });
   }
   return out;
 }
+

@@ -154,14 +154,22 @@ async function persistAvailability(
     availability_type: string;
     confidence: number;
     source_url: string | null;
+    raw_payload?: Record<string, unknown>;
   }>,
 ) {
   if (!titleId) return;
   const now = new Date().toISOString();
   try {
-    if (rows.length > 0) {
+    // Defense in depth: drop firecrawl rows missing evidence before write.
+    const safeRows = rows.filter((r) => {
+      if (r.source !== "firecrawl") return true;
+      if (!r.source_url) return false;
+      if (!r.raw_payload || Object.keys(r.raw_payload).length === 0) return false;
+      return true;
+    });
+    if (safeRows.length > 0) {
       await sb.from("content_availability").upsert(
-        rows.map((r) => ({
+        safeRows.map((r) => ({
           title_id: titleId,
           provider_id: r.provider_id,
           region: "TR",
@@ -172,7 +180,7 @@ async function persistAvailability(
           confidence: r.confidence,
           last_seen_at: now,
           checked_at: now,
-          raw_payload: {},
+          raw_payload: r.raw_payload ?? {},
         })),
         { onConflict: "title_id,provider_id,region,availability_type" },
       );
@@ -180,7 +188,7 @@ async function persistAvailability(
 
     // Stale handling: existing rows for this title NOT in the current set →
     // mark unavailable (but only if their previous check was old enough).
-    const seenKeys = new Set(rows.map((r) => `${r.provider_id}:${r.availability_type}`));
+    const seenKeys = new Set(safeRows.map((r) => `${r.provider_id}:${r.availability_type}`));
     const staleCutoff = new Date(Date.now() - AVAILABILITY_FRESH_HOURS * 3600 * 1000).toISOString();
     const { data: existing } = await sb
       .from("content_availability")
@@ -231,6 +239,7 @@ async function enrichCandidate(
   const availabilityRows: Array<{
     provider_id: string; source: "tmdb" | "firecrawl";
     availability_type: string; confidence: number; source_url: string | null;
+    raw_payload?: Record<string, unknown>;
   }> = [];
 
   const pushFromTmdb = (
@@ -283,19 +292,32 @@ async function enrichCandidate(
     firecrawlEligible.length > 0;
 
   if (shouldRunFirecrawl) {
-    const text = await firecrawlSearchText(detail.title, cand.release_year);
-    if (text) {
+    const fc = await firecrawlSearchText(detail.title, cand.release_year);
+    if (fc.text || fc.results.length > 0) {
       usedFirecrawl = true;
-      // Only consider providers TMDB didn't already supply
-      const fcResults = extractProvidersFromText(text, firecrawlEligible, detail.title);
-      for (const { provider: p, confidence } of fcResults) {
+      const fcResults = extractProvidersFromText(
+        fc.text,
+        firecrawlEligible,
+        detail.title,
+        fc.results,
+      );
+      let added = 0;
+      let rejected = 0;
+      for (const ext of fcResults) {
+        const { provider: p, confidence, source_url, raw_payload } = ext;
         if (seen.has(p.slug)) continue;
+        // Defense in depth: never persist firecrawl rows without evidence.
+        if (!source_url || !raw_payload || Object.keys(raw_payload).length === 0) {
+          rejected++;
+          continue;
+        }
         seen.add(p.slug);
+        added++;
         platforms.push({
           name: p.display_name,
           logo: null,
           type: "subscription",
-          link: null,
+          link: source_url,
           source: "firecrawl",
         });
         availabilityRows.push({
@@ -303,12 +325,13 @@ async function enrichCandidate(
           source: "firecrawl",
           availability_type: "stream",
           confidence,
-          source_url: null,
+          source_url,
+          raw_payload,
         });
       }
       console.log(
-        `[hapl] firecrawl gap-fill: title="${detail.title}" added=${fcResults.length} ` +
-        `tmdb_count=${platforms.length - fcResults.length}`,
+        `[hapl] firecrawl gap-fill: title="${detail.title}" added=${added} rejected=${rejected} ` +
+        `query="${fc.query}" results=${fc.results.length}`,
       );
     }
   }

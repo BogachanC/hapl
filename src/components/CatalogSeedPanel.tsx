@@ -173,49 +173,38 @@ export function CatalogSeedPanel() {
     return res.data;
   };
 
-  // Restore last interrupted job from localStorage + DB on mount
+  const fetchJobStatus = async (id: string): Promise<SeedJobSummary | null> => {
+    const data = await invokeSeedFunction('status', { job_id: id }) as { ok: boolean; job?: SeedJobSummary | null };
+    return data?.ok ? (data.job ?? null) : null;
+  };
+
+  const findLatestIncomplete = async (): Promise<SeedJobSummary | null> => {
+    const data = await invokeSeedFunction('latest_incomplete', {}) as { ok: boolean; job?: SeedJobSummary | null };
+    return data?.ok ? (data.job ?? null) : null;
+  };
+
+  // Restore last interrupted job from localStorage or backend status on mount
   useEffect(() => {
-    const saved = localStorage.getItem(ACTIVE_JOB_KEY);
-    if (!saved) return;
-    setActiveJobId(saved);
+    const saved = localStorage.getItem(ACTIVE_JOB_KEY) || localStorage.getItem(LEGACY_ACTIVE_JOB_KEY);
     (async () => {
-      const { data, error } = await supabase
-        .from('catalog_seed_jobs')
-        .select('id, status, plan_total, processed_jobs, current_provider, current_strategy, current_page, last_error, updated_at, stats, coverage_delta, sources')
-        .eq('id', saved)
-        .maybeSingle();
-      if (error || !data) return;
-      if (data.status === 'completed') {
-        localStorage.removeItem(ACTIVE_JOB_KEY);
-        setActiveJobId(null);
-        return;
+      try {
+        const job = saved ? await fetchJobStatus(saved) : await findLatestIncomplete();
+        if (!job) return;
+        if (job.status === 'completed') {
+          if (saved === job.id) clearActiveJob();
+          return;
+        }
+        applyJobSummary(job);
+      } catch (e: any) {
+        if (saved) {
+          persistActiveJob(saved);
+          setInterrupted(true);
+          setErrorMsg(CONNECTION_ERROR_MESSAGE);
+          setDebugInfo({ functionName: SEED_FUNCTION, action: 'status', jobId: saved, errorMessage: e?.message || 'Status çağrısı başarısız' });
+        }
       }
-      // Treat as interrupted (running but stale heartbeat too)
-      const stale = data.status === 'running' && data.updated_at
-        && (Date.now() - new Date(data.updated_at).getTime()) > 120_000;
-      setInterrupted(true);
-      setErrorMsg(data.last_error || (stale ? 'Job heartbeat eski (>2dk)' : null));
-      setProgress({ chunks: 0, processed: data.processed_jobs ?? 0, total: data.plan_total ?? 0 });
-      setLastResult({
-        ok: true, done: false, status: data.status as any, job_id: data.id,
-        next_cursor: null, plan_total: data.plan_total ?? 0,
-        processed_jobs: data.processed_jobs ?? 0, jobs_done_this_chunk: 0,
-        stats: (data.stats as any) ?? {} as any,
-        sources: (data.sources as any) ?? [],
-        coverage_delta: (data.coverage_delta as any) ?? null,
-        elapsed_ms: 0,
-      });
     })();
   }, []);
-
-  const fetchJobFromDb = async (id: string) => {
-    const { data } = await supabase
-      .from('catalog_seed_jobs')
-      .select('id, status, plan_total, processed_jobs, last_error, updated_at, current_provider, current_strategy, current_page')
-      .eq('id', id)
-      .maybeSingle();
-    return data;
-  };
 
   const drive = async (initialBody: any, label: string, existingJobId?: string) => {
     setRunning(true);

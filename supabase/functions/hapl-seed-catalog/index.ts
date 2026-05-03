@@ -166,12 +166,26 @@ interface Cursor {
   baseline?: Baseline;
 }
 
+// Stale job watchdog: any running/partial job whose heartbeat is older than
+// this threshold is considered stale (proxy timeout / browser closed before
+// the chunk loop recorded a partial state). UI can offer "mark failed".
+const STALE_THRESHOLD_MS = 10 * 60 * 1000;
+
+function isJobStale(jobRow: any): boolean {
+  if (!jobRow) return false;
+  if (jobRow.status !== "running" && jobRow.status !== "partial") return false;
+  const ts = jobRow.last_heartbeat_at || jobRow.updated_at;
+  if (!ts) return true;
+  return Date.now() - new Date(ts).getTime() > STALE_THRESHOLD_MS;
+}
+
 function jobToSummary(jobRow: any) {
   const params = jobRow?.params || {};
   const cursor = jobRow?.cursor || null;
   return {
     id: jobRow.id,
     status: jobRow.status,
+    is_stale: isJobStale(jobRow),
     mode: jobRow.mode,
     selected_provider_slug: Array.isArray(params.providers) && params.providers.length === 1
       ? params.providers[0]

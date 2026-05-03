@@ -61,8 +61,36 @@ interface ChunkResponse {
   elapsed_ms: number;
 }
 
+interface SeedJobSummary {
+  id: string;
+  status: 'running' | 'partial' | 'paused' | 'failed' | 'completed' | string;
+  selected_provider_slug?: string | null;
+  current_strategy?: string | null;
+  current_media_type?: string | null;
+  current_page?: number | null;
+  total_pages?: number | null;
+  processed_count?: number | null;
+  processed_jobs?: number | null;
+  plan_total?: number | null;
+  last_error?: string | null;
+  updated_at?: string | null;
+  stats?: SeedStats;
+  sources?: SourceStats[];
+  coverage_delta?: CoverageDelta | null;
+}
+
+interface FunctionDebug {
+  functionName: string;
+  action: string;
+  jobId?: string | null;
+  errorMessage: string;
+}
+
 const MAX_CHUNKS = 800;
-const ACTIVE_JOB_KEY = 'hapl.catalog_seed.active_job_id';
+const ACTIVE_JOB_KEY = 'hapl_active_catalog_seed_job_id';
+const LEGACY_ACTIVE_JOB_KEY = 'hapl.catalog_seed.active_job_id';
+const SEED_FUNCTION = 'hapl-seed-catalog';
+const CONNECTION_ERROR_MESSAGE = 'Bağlantı koptu veya proxy hata verdi. Job kaydı korunuyor. Devam etmeyi deneyebilirsin.';
 
 type SeedMode = 'small' | 'large' | 'wide' | 'deep' | 'provider-targeted';
 type ProviderSlug = 'all' | 'netflix' | 'amazon-prime-video' | 'max' | 'disney-plus' | 'mubi' | 'tv-plus';

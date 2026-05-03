@@ -892,10 +892,10 @@ serve(async (req: Request) => {
     if (jobInsErr) console.warn("[seed] job insert failed:", jobInsErr.message);
     jobId = jobIns?.id ?? null;
 
-    // Prepare mode: return job_id immediately so frontend can persist it
+    // Start mode: return job_id immediately so frontend can persist it
     // before any long-running chunk work begins. Caller then loops with
     // { action: "continue", job_id } to actually do the work.
-    if (isPrepare) {
+    if (isStart) {
       return new Response(
         JSON.stringify({
           ok: true,

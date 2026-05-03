@@ -436,7 +436,7 @@ async function runJob(
       stats.skipped_no_poster++;
       continue;
     }
-    await processOne(sb, item, providers, stats, src);
+    await processOne(sb, item, providers, stats, src, job.verify_tmdb_provider_id);
   }
 }
 

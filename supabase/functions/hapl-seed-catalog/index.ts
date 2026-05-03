@@ -394,12 +394,21 @@ async function runJob(
     withWatchProviders: job.tmdb_provider_id ? [job.tmdb_provider_id] : undefined,
     withGenres: job.with_genres,
     watchRegion: "TR",
-    voteCountGte: voteFloor,
-    sortBy: "popularity.desc",
+    voteCountGte: job.vote_count_gte ?? voteFloor,
+    voteAverageGte: job.vote_average_gte,
+    releaseDateGte: job.release_date_gte,
+    releaseDateLte: job.release_date_lte,
+    withOriginalLanguage: job.with_original_language,
+    sortBy: job.sort_by ?? "popularity.desc",
   });
   for (const item of results) {
     stats.discovered++;
     src.discovered++;
+    // Quality guard: require poster up front to skip detail fetch entirely
+    if (!item.poster_path) {
+      stats.skipped_no_poster++;
+      continue;
+    }
     await processOne(sb, item, providers, stats, src);
   }
 }

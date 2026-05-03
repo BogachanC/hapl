@@ -599,6 +599,66 @@ serve(async (req: Request) => {
         providers: providersFilter ?? undefined,
       };
       jobs = buildProviderTargetedPlan(cfg);
+    } else if (body.mode === "provider-full") {
+      // "Tüm TMDB Sonuçları": probe total_pages per (type, strategy) for the
+      // single selected provider, then build a full job list. TMDB caps at 500.
+      const slug: string | undefined = (Array.isArray(providersFilter) && providersFilter.length === 1)
+        ? providersFilter[0]
+        : (typeof body.provider === "string" ? body.provider : undefined);
+      const target = TMDB_PROVIDERS_TR.find((p) => p.slug === slug);
+      if (!target || !PROVIDER_TARGETED_ALLOWED.has(target.slug)) {
+        return new Response(JSON.stringify({ error: "provider-full requires a single supported provider" }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const cfg = {
+        vote_count_floor: Math.max(0, body.vote_count_floor ?? 10),
+        vote_average_floor: Math.max(0, body.vote_average_floor ?? 6.5),
+        strategies: (Array.isArray(body.strategies) && body.strategies.length > 0
+          ? body.strategies
+          : ["popularity", "vote_count", "vote_average", "recent"]) as Array<"popularity"|"vote_count"|"vote_average"|"recent">,
+        recent_year_from: body.recent_year_from ?? 2022,
+        max_pages_per_strategy: Math.max(1, Math.min(500, body.max_pages_per_strategy ?? 500)),
+      };
+      const recentGte = `${cfg.recent_year_from}-01-01`;
+      jobs = [];
+      for (const type of ["movie", "tv"] as const) {
+        for (const strat of cfg.strategies) {
+          // Build a probe job to get total_pages
+          const probeOpts: any = {
+            type, page: 1, withWatchProviders: [target.tmdb_id], watchRegion: "TR",
+          };
+          if (strat === "popularity") {
+            probeOpts.sortBy = "popularity.desc"; probeOpts.voteCountGte = cfg.vote_count_floor;
+          } else if (strat === "vote_average") {
+            probeOpts.sortBy = "vote_average.desc";
+            probeOpts.voteCountGte = Math.max(cfg.vote_count_floor, 50);
+            probeOpts.voteAverageGte = cfg.vote_average_floor;
+          } else if (strat === "vote_count") {
+            probeOpts.sortBy = "vote_count.desc"; probeOpts.voteCountGte = cfg.vote_count_floor;
+          } else if (strat === "recent") {
+            probeOpts.sortBy = type === "movie" ? "primary_release_date.desc" : "first_air_date.desc";
+            probeOpts.voteCountGte = Math.max(5, Math.floor(cfg.vote_count_floor / 2));
+            probeOpts.releaseDateGte = recentGte;
+          }
+          const probe = await tmdbDiscover(probeOpts);
+          const totalPages = Math.min(probe.total_pages || 1, cfg.max_pages_per_strategy);
+          for (let page = 1; page <= totalPages; page++) {
+            const job: Job = {
+              source: `pf:${target.slug}:${strat}`,
+              type, page,
+              tmdb_provider_id: target.tmdb_id,
+              verify_tmdb_provider_id: target.tmdb_id,
+              strategy: strat,
+              sort_by: probeOpts.sortBy,
+              vote_count_gte: probeOpts.voteCountGte,
+              vote_average_gte: probeOpts.voteAverageGte,
+              release_date_gte: probeOpts.releaseDateGte,
+            };
+            jobs.push(job);
+          }
+        }
+      }
     } else {
       const pagesPrimary = Math.max(0, Math.min(20, body.pages_primary ?? DEFAULT_PAGES_PRIMARY));
       const pagesSecondary = Math.max(0, Math.min(20, body.pages_secondary ?? DEFAULT_PAGES_SECONDARY));

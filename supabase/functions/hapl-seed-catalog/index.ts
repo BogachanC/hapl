@@ -628,7 +628,9 @@ serve(async (req: Request) => {
   // ─── Resume / restart / load existing job ─────────────────────────────
   let cursor: Cursor;
   let jobId: string | null = typeof body.job_id === "string" ? body.job_id : null;
-  const isResume = !!body.resume && !!jobId;
+  const action: string = typeof body.action === "string" ? body.action : "";
+  const isResume = (action === "continue" || !!body.resume) && !!jobId;
+  const isPrepare = action === "prepare";
 
   if (isResume) {
     const { data: jobRow, error: jobErr } = await sb

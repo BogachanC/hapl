@@ -222,18 +222,13 @@ export function CatalogSeedPanel() {
     let body: any = initialBody;
     let currentJobId: string | null = existingJobId ?? null;
 
-    // Prepare phase: persist job_id ASAP before long work starts
+    // Start phase: persist job_id ASAP before long work starts
     if (!existingJobId) {
       try {
-        const prep = await supabase.functions.invoke('hapl-seed-catalog', {
-          body: { ...initialBody, action: 'prepare' },
-        });
-        if (prep.error) throw prep.error;
-        const prepData = prep.data as ChunkResponse;
+        const prepData = await invokeSeedFunction('start', initialBody) as ChunkResponse;
         if (prepData.job_id) {
           currentJobId = prepData.job_id;
-          setActiveJobId(prepData.job_id);
-          localStorage.setItem(ACTIVE_JOB_KEY, prepData.job_id);
+          persistActiveJob(prepData.job_id);
           setLastResult(prepData);
           setProgress({ chunks: 0, processed: 0, total: prepData.plan_total });
         }
@@ -249,16 +244,14 @@ export function CatalogSeedPanel() {
 
     try {
       while (chunkCount < MAX_CHUNKS) {
-        const { data, error } = await supabase.functions.invoke('hapl-seed-catalog', { body });
-        if (error) throw error;
-        const chunk = data as ChunkResponse;
+        const action = body?.action === 'continue' ? 'continue' : 'continue';
+        const chunk = await invokeSeedFunction(action, { job_id: currentJobId }) as ChunkResponse;
         chunkCount++;
         lastChunk = chunk;
 
         if (chunk.job_id) {
           currentJobId = chunk.job_id;
-          setActiveJobId(chunk.job_id);
-          localStorage.setItem(ACTIVE_JOB_KEY, chunk.job_id);
+          persistActiveJob(chunk.job_id);
         }
 
         setProgress({ chunks: chunkCount, processed: chunk.processed_jobs, total: chunk.plan_total });
@@ -270,15 +263,12 @@ export function CatalogSeedPanel() {
         }
         if (chunk.done) break;
 
-        body = currentJobId
-          ? { action: 'continue', job_id: currentJobId }
-          : (chunk.next_cursor ? { cursor: chunk.next_cursor } : null);
-        if (!body) break;
+        if (!currentJobId) break;
+        body = { action: 'continue', job_id: currentJobId };
       }
 
       if (lastChunk?.done) {
-        localStorage.removeItem(ACTIVE_JOB_KEY);
-        setActiveJobId(null);
+        clearActiveJob();
         toast.success(
           `Seed tamamlandı (${chunkCount} chunk): ${lastChunk.stats.titles_upserted} içerik, ${lastChunk.stats.availability_rows} platform kaydı`,
         );
@@ -289,27 +279,26 @@ export function CatalogSeedPanel() {
     } catch (e: any) {
       const msg = e?.message || 'Bilinmeyen hata';
       setInterrupted(true);
-      // Proxy/network error: response gelmedi. DB'den son job durumunu çek.
+      setErrorMsg(CONNECTION_ERROR_MESSAGE);
       if (currentJobId) {
-        const job = await fetchJobFromDb(currentJobId);
-        if (job) {
-          setProgress({ chunks: chunkCount, processed: job.processed_jobs ?? 0, total: job.plan_total ?? 0 });
+        persistActiveJob(currentJobId);
+        try {
+          const job = await fetchJobStatus(currentJobId);
+          if (job) {
+            applyJobSummary(job);
+          }
           if (job.status === 'completed') {
-            localStorage.removeItem(ACTIVE_JOB_KEY);
-            setActiveJobId(null);
+            clearActiveJob();
             setInterrupted(false);
             toast.success('Keşif tamamlandı (DB onayı).');
             setRunning(false);
             return;
           }
-          setErrorMsg(`Bağlantı kesildi ama iş durumu kaydedildi (${job.processed_jobs}/${job.plan_total}). Kaldığı yerden devam edebilirsin.`);
-          toast.warning('Bağlantı koptu — Devam Et ile sürdürebilirsin.');
-          setRunning(false);
-          return;
+        } catch {
+          setDebugInfo({ functionName: SEED_FUNCTION, action: 'continue', jobId: currentJobId, errorMessage: msg });
         }
       }
-      setErrorMsg(msg);
-      toast.error('Keşif yarıda kesildi: ' + msg);
+      toast.warning(CONNECTION_ERROR_MESSAGE);
     } finally {
       setRunning(false);
     }

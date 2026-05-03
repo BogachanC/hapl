@@ -154,14 +154,22 @@ async function persistAvailability(
     availability_type: string;
     confidence: number;
     source_url: string | null;
+    raw_payload?: Record<string, unknown>;
   }>,
 ) {
   if (!titleId) return;
   const now = new Date().toISOString();
   try {
-    if (rows.length > 0) {
+    // Defense in depth: drop firecrawl rows missing evidence before write.
+    const safeRows = rows.filter((r) => {
+      if (r.source !== "firecrawl") return true;
+      if (!r.source_url) return false;
+      if (!r.raw_payload || Object.keys(r.raw_payload).length === 0) return false;
+      return true;
+    });
+    if (safeRows.length > 0) {
       await sb.from("content_availability").upsert(
-        rows.map((r) => ({
+        safeRows.map((r) => ({
           title_id: titleId,
           provider_id: r.provider_id,
           region: "TR",
@@ -172,7 +180,7 @@ async function persistAvailability(
           confidence: r.confidence,
           last_seen_at: now,
           checked_at: now,
-          raw_payload: {},
+          raw_payload: r.raw_payload ?? {},
         })),
         { onConflict: "title_id,provider_id,region,availability_type" },
       );

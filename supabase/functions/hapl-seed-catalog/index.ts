@@ -125,6 +125,9 @@ interface Job {
   release_date_gte?: string;
   release_date_lte?: string;
   with_original_language?: string;
+  // Provider-targeted sweep: require this TMDB provider_id to appear in
+  // the title's TR /watch/providers result. If not, skip availability write.
+  verify_tmdb_provider_id?: number;
 }
 
 interface Cursor {

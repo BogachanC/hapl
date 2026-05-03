@@ -339,6 +339,7 @@ async function enrichCandidate(
           type: "subscription",
           link: source_url,
           source: "firecrawl",
+          slug: p.slug,
         });
         availabilityRows.push({
           provider_id: p.id,

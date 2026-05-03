@@ -218,6 +218,10 @@ export async function tmdbDiscover(
     sortBy = "popularity.desc",
     language = "tr-TR",
     voteCountGte,
+    voteAverageGte,
+    releaseDateGte,
+    releaseDateLte,
+    withOriginalLanguage,
     includeAdult = false,
   } = opts;
 
@@ -237,6 +241,20 @@ export async function tmdbDiscover(
   }
   if (typeof voteCountGte === "number") {
     params.set("vote_count.gte", String(voteCountGte));
+  }
+  if (typeof voteAverageGte === "number") {
+    params.set("vote_average.gte", String(voteAverageGte));
+  }
+  if (releaseDateGte) {
+    if (type === "movie") params.set("primary_release_date.gte", releaseDateGte);
+    else params.set("first_air_date.gte", releaseDateGte);
+  }
+  if (releaseDateLte) {
+    if (type === "movie") params.set("primary_release_date.lte", releaseDateLte);
+    else params.set("first_air_date.lte", releaseDateLte);
+  }
+  if (withOriginalLanguage) {
+    params.set("with_original_language", withOriginalLanguage);
   }
 
   const url = `${TMDB_BASE}/discover/${type}?${params.toString()}`;

@@ -278,6 +278,7 @@ async function enrichCandidate(
         type,
         link: watch.link,
         source: "tmdb",
+        slug: match.slug,
       });
       availabilityRows.push({
         provider_id: match.id,

@@ -613,9 +613,48 @@ serve(async (req: Request) => {
     });
   }
 
-  // ─── Cursor: either continue an existing run or start a new plan ──────
+  // ─── Job persistence helpers ───────────────────────────────────────────
+  async function persistJob(jobId: string, patch: Record<string, any>) {
+    try {
+      await sb.from("catalog_seed_jobs").update({
+        ...patch,
+        last_heartbeat_at: new Date().toISOString(),
+      }).eq("id", jobId);
+    } catch (e) {
+      console.warn("[seed] persistJob failed:", (e as Error).message);
+    }
+  }
+
+  // ─── Resume / restart / load existing job ─────────────────────────────
   let cursor: Cursor;
-  if (body.cursor && typeof body.cursor === "object" && Array.isArray(body.cursor.jobs)) {
+  let jobId: string | null = typeof body.job_id === "string" ? body.job_id : null;
+  const isResume = !!body.resume && !!jobId;
+
+  if (isResume) {
+    const { data: jobRow, error: jobErr } = await sb
+      .from("catalog_seed_jobs").select("*").eq("id", jobId).maybeSingle();
+    if (jobErr || !jobRow) {
+      return new Response(JSON.stringify({ error: "job not found" }), {
+        status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    if (jobRow.status === "completed") {
+      return new Response(JSON.stringify({
+        ok: true, done: true, job_id: jobId, status: "completed",
+        next_cursor: null, plan_total: jobRow.plan_total,
+        processed_jobs: jobRow.processed_jobs, jobs_done_this_chunk: 0,
+        stats: jobRow.stats, sources: jobRow.sources ?? [],
+        coverage_delta: jobRow.coverage_delta ?? null, elapsed_ms: 0,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+    if (!jobRow.cursor) {
+      return new Response(JSON.stringify({ error: "job has no cursor" }), {
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    cursor = jobRow.cursor as Cursor;
+    await persistJob(jobId!, { status: "running", last_error: null });
+  } else if (body.cursor && typeof body.cursor === "object" && Array.isArray(body.cursor.jobs)) {
     cursor = body.cursor as Cursor;
     if (!cursor.stats.kind_counts) cursor.stats.kind_counts = {};
     if (!cursor.stats.provider_counts) cursor.stats.provider_counts = {};
@@ -658,8 +697,6 @@ serve(async (req: Request) => {
       };
       jobs = buildProviderTargetedPlan(cfg);
     } else if (body.mode === "provider-full") {
-      // "Tüm TMDB Sonuçları": probe total_pages per (type, strategy) for the
-      // single selected provider, then build a full job list. TMDB caps at 500.
       const slug: string | undefined = (Array.isArray(providersFilter) && providersFilter.length === 1)
         ? providersFilter[0]
         : (typeof body.provider === "string" ? body.provider : undefined);
@@ -682,7 +719,6 @@ serve(async (req: Request) => {
       jobs = [];
       for (const type of ["movie", "tv"] as const) {
         for (const strat of cfg.strategies) {
-          // Build a probe job to get total_pages
           const probeOpts: any = {
             type, page: 1, withWatchProviders: [target.tmdb_id], watchRegion: "TR",
           };
@@ -702,7 +738,7 @@ serve(async (req: Request) => {
           const probe = await tmdbDiscover(probeOpts);
           const totalPages = Math.min(probe.total_pages || 1, cfg.max_pages_per_strategy);
           for (let page = 1; page <= totalPages; page++) {
-            const job: Job = {
+            jobs.push({
               source: `pf:${target.slug}:${strat}`,
               type, page,
               tmdb_provider_id: target.tmdb_id,
@@ -712,8 +748,7 @@ serve(async (req: Request) => {
               vote_count_gte: probeOpts.voteCountGte,
               vote_average_gte: probeOpts.voteAverageGte,
               release_date_gte: probeOpts.releaseDateGte,
-            };
-            jobs.push(job);
+            });
           }
         }
       }
@@ -725,10 +760,7 @@ serve(async (req: Request) => {
     }
 
     cursor = {
-      v: 1,
-      jobs,
-      job_index: 0,
-      vote_floor: voteFloor,
+      v: 1, jobs, job_index: 0, vote_floor: voteFloor,
       stats: {
         discovered: 0,
         titles_processed: 0, titles_new: 0, titles_existing: 0,
@@ -737,24 +769,19 @@ serve(async (req: Request) => {
         aliases_added: 0, aliases_skipped_cached: 0, errors: 0,
         skipped_no_poster: 0, skipped_no_tr_availability: 0,
         skipped_provider_unverified: 0,
-        kind_counts: {},
-        provider_counts: {},
+        kind_counts: {}, provider_counts: {},
       },
       sources: {},
     };
 
-    // Baseline coverage for delta reporting (single-provider modes)
     let baselineSlug: string | null = null;
     if ((body.mode === "provider-full" || body.mode === "provider-targeted")
         && providersFilter && providersFilter.length === 1) {
       baselineSlug = providersFilter[0];
     }
     const baseline: Baseline = {
-      target_slug: baselineSlug,
-      target_provider_id: null,
-      titles_total_before: 0,
-      target_avail_before: 0,
-      target_available_titles_before: 0,
+      target_slug: baselineSlug, target_provider_id: null,
+      titles_total_before: 0, target_avail_before: 0, target_available_titles_before: 0,
     };
     try {
       const totalQ = await sb.from("content_titles").select("id", { count: "exact", head: true });
@@ -766,9 +793,7 @@ serve(async (req: Request) => {
           const availQ = await sb
             .from("content_availability")
             .select("title_id", { count: "exact", head: true })
-            .eq("provider_id", prov.id)
-            .eq("region", "TR")
-            .eq("status", "available");
+            .eq("provider_id", prov.id).eq("region", "TR").eq("status", "available");
           baseline.target_avail_before = availQ.count ?? 0;
           baseline.target_available_titles_before = availQ.count ?? 0;
         }
@@ -777,31 +802,55 @@ serve(async (req: Request) => {
       console.warn("[seed] baseline capture failed:", (e as Error).message);
     }
     cursor.baseline = baseline;
+
+    // Create persistent job row
+    const { data: jobIns, error: jobInsErr } = await sb
+      .from("catalog_seed_jobs")
+      .insert({
+        status: "running",
+        mode: body.mode || "small",
+        params: body,
+        cursor,
+        plan_total: cursor.jobs.length,
+        processed_jobs: 0,
+        stats: cursor.stats,
+        sources: [],
+        baseline,
+      })
+      .select("id")
+      .maybeSingle();
+    if (jobInsErr) console.warn("[seed] job insert failed:", jobInsErr.message);
+    jobId = jobIns?.id ?? null;
   }
 
   const t0 = Date.now();
   const planTotal = cursor.jobs.length;
   const startIndex = cursor.job_index;
   let jobsDoneThisChunk = 0;
+  let chunkError: string | null = null;
 
-  while (cursor.job_index < cursor.jobs.length) {
-    if (Date.now() - t0 > SOFT_TIME_BUDGET_MS) break;
-    const job = cursor.jobs[cursor.job_index];
-    if (!cursor.sources[job.source]) cursor.sources[job.source] = emptySource(job.source);
-    try {
-      await runJob(sb, job, cursor.vote_floor, providers, cursor.stats, cursor.sources[job.source]);
-    } catch (err) {
-      console.error(`[seed] job ${job.source}/${job.type}/p${job.page} failed:`, (err as Error).message);
-      cursor.stats.errors++;
+  try {
+    while (cursor.job_index < cursor.jobs.length) {
+      if (Date.now() - t0 > SOFT_TIME_BUDGET_MS) break;
+      const job = cursor.jobs[cursor.job_index];
+      if (!cursor.sources[job.source]) cursor.sources[job.source] = emptySource(job.source);
+      try {
+        await runJob(sb, job, cursor.vote_floor, providers, cursor.stats, cursor.sources[job.source]);
+      } catch (err) {
+        console.error(`[seed] job ${job.source}/${job.type}/p${job.page} failed:`, (err as Error).message);
+        cursor.stats.errors++;
+      }
+      cursor.job_index++;
+      jobsDoneThisChunk++;
     }
-    cursor.job_index++;
-    jobsDoneThisChunk++;
+  } catch (err) {
+    chunkError = (err as Error).message || "unknown chunk error";
+    console.error("[seed] chunk fatal:", chunkError);
   }
 
-  const done = cursor.job_index >= cursor.jobs.length;
+  const done = !chunkError && cursor.job_index >= cursor.jobs.length;
   const elapsed_ms = Date.now() - t0;
 
-  // On completion, compute coverage delta if baseline was captured
   let coverage_delta: CoverageDelta | null = null;
   if (done && cursor.baseline) {
     try {
@@ -813,9 +862,7 @@ serve(async (req: Request) => {
         const aQ = await sb
           .from("content_availability")
           .select("title_id", { count: "exact", head: true })
-          .eq("provider_id", b.target_provider_id)
-          .eq("region", "TR")
-          .eq("status", "available");
+          .eq("provider_id", b.target_provider_id).eq("region", "TR").eq("status", "available");
         availAfter = aQ.count ?? 0;
       }
       coverage_delta = {
@@ -835,11 +882,34 @@ serve(async (req: Request) => {
     }
   }
 
+  if (jobId) {
+    const idx = Math.min(cursor.job_index, cursor.jobs.length - 1);
+    const currentJob = cursor.jobs[idx];
+    const status = chunkError ? "failed" : (done ? "completed" : "partial");
+    await persistJob(jobId, {
+      status,
+      cursor: done ? null : cursor,
+      processed_jobs: cursor.job_index,
+      plan_total: planTotal,
+      stats: cursor.stats,
+      sources: Object.values(cursor.sources),
+      coverage_delta,
+      last_error: chunkError,
+      current_provider: currentJob?.source ?? null,
+      current_strategy: currentJob?.strategy ?? null,
+      current_type: currentJob?.type ?? null,
+      current_page: currentJob?.page ?? null,
+      completed_at: done ? new Date().toISOString() : null,
+    });
+  }
+
   return new Response(
     JSON.stringify({
-      ok: true,
+      ok: !chunkError,
       done,
-      next_cursor: done ? null : cursor,
+      status: chunkError ? "failed" : (done ? "completed" : "partial"),
+      job_id: jobId,
+      next_cursor: done || chunkError ? null : cursor,
       plan_total: planTotal,
       processed_jobs: cursor.job_index,
       jobs_done_this_chunk: jobsDoneThisChunk,
@@ -847,6 +917,7 @@ serve(async (req: Request) => {
       stats: cursor.stats,
       sources: Object.values(cursor.sources),
       coverage_delta,
+      error: chunkError,
       elapsed_ms,
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } },

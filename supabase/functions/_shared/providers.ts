@@ -82,35 +82,63 @@ function countDomainOccurrences(haystack: string, domain: string): number {
   return matches ? matches.length : 0;
 }
 
+export interface FirecrawlEvidence {
+  /** Optional source URL chosen as primary evidence (must be non-null to persist). */
+  source_url: string | null;
+  /** Structured evidence payload — written into raw_payload. */
+  raw_payload: Record<string, unknown>;
+}
+
 export interface ExtractedProvider {
   provider: ProviderRow;
   confidence: number; // 0..1
   evidence: string[];
+  /** Strong evidence; required for persistence (source_url must be non-null). */
+  source_url: string | null;
+  raw_payload: Record<string, unknown>;
+}
+
+export interface FirecrawlResultLike {
+  url: string;
+  title: string;
+  description: string;
 }
 
 /**
- * Extract provider mentions from free-form text (Firecrawl fallback).
- * Stricter than naive includes():
- * - Word-boundary match (no "max" inside "maximum")
- * - Domains weigh higher than display names
- * - Co-occurrence with TR streaming context boosts confidence
- * - Ambiguous short names (Max, GAIN) require domain OR strong context
- * - Optional `title` parameter: provider mentioned near the title is stronger
+ * Extract provider mentions from Firecrawl search results.
+ * Hard requirements (no exceptions):
+ * - Provider must be firecrawl_enabled
+ * - Provider must NOT be in TMDB_PRIMARY_SLUGS (TMDB is authoritative)
+ * - At least one result MUST contain a matching provider domain in URL or text
+ * - Title token must co-occur in same result (title evidence)
+ * - Returns source_url + raw_payload — caller must NOT persist if source_url is null
  */
 export function extractProvidersFromText(
-  text: string,
+  textOrResults: string | FirecrawlResultLike[],
   providers: ProviderRow[],
   title?: string,
+  results?: FirecrawlResultLike[],
 ): ExtractedProvider[] {
-  if (!text) return [];
-  const t = text.toLowerCase();
+  // Backward-compat: accept (text, providers, title) OR (results, providers, title)
+  const items: FirecrawlResultLike[] = Array.isArray(textOrResults)
+    ? textOrResults
+    : results ?? [];
+  const aggregateText =
+    typeof textOrResults === "string"
+      ? textOrResults
+      : items.map((r) => `${r.title} ${r.description} ${r.url}`).join(" ");
+  if (!aggregateText && items.length === 0) return [];
+  const t = aggregateText.toLowerCase();
   const hasStreamContext =
     /\b(izle|stream|yayin|yayın|platform|abonelik|katalog|izleyebilir|watch)\b/.test(t);
-  const hasTitleContext = title ? t.includes(title.toLowerCase()) : false;
+  const titleLower = title ? title.toLowerCase() : "";
+  const hasTitleContext = titleLower ? t.includes(titleLower) : false;
 
   const out: ExtractedProvider[] = [];
   for (const p of providers) {
     if (!p.firecrawl_enabled) continue;
+    // TMDB-primary global providers: never accepted from Firecrawl gap-fill.
+    if (TMDB_PRIMARY_SLUGS.has(p.slug)) continue;
 
     const evidence: string[] = [];
     let nameHits = 0;

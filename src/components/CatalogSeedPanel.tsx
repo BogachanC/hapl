@@ -41,7 +41,7 @@ interface ChunkResponse {
 
 const MAX_CHUNKS = 200; // safety cap (deep mode may need many chunks)
 
-type SeedMode = 'small' | 'large' | 'wide' | 'deep';
+type SeedMode = 'small' | 'large' | 'wide' | 'deep' | 'provider-targeted';
 
 export function CatalogSeedPanel() {
   const [running, setRunning] = useState(false);

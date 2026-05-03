@@ -63,7 +63,8 @@ export function CatalogSeedPanel() {
         ? { pages_primary: 3, pages_secondary: 2, pages_docs: 2, vote_floor: 20 }
         : mode === 'wide'
         ? { pages_primary: 8, pages_secondary: 5, pages_docs: 4, vote_floor: 15 }
-        : {
+        : mode === 'deep'
+        ? {
             mode: 'deep',
             pages_per_strategy: 5,
             pages_docs_per_strategy: 3,
@@ -71,6 +72,15 @@ export function CatalogSeedPanel() {
             vote_average_floor: 7.0,
             strategies: ['popularity', 'vote_count', 'vote_average', 'recent'],
             recent_year_from: 2022,
+          }
+        : {
+            mode: 'provider-targeted',
+            pages_per_strategy: 5,
+            vote_count_floor: 10,
+            vote_average_floor: 6.5,
+            strategies: ['popularity', 'vote_count', 'vote_average', 'recent'],
+            recent_year_from: 2022,
+            providers: ['netflix', 'amazon-prime-video', 'max', 'disney-plus', 'mubi', 'tv-plus'],
           };
 
     toast.info(
@@ -80,7 +90,9 @@ export function CatalogSeedPanel() {
         ? 'Büyük seed başlatıldı (~1000 içerik). Birden fazla chunk halinde çalışacak…'
         : mode === 'wide'
         ? 'Geniş seed başlatıldı (~3000 hedef). Çok sayıda chunk halinde çalışacak, sayfada kalın…'
-        : 'Derin TMDB Expansion başlatıldı (~5000+ hedef). Çoklu strateji, uzun sürebilir, sayfada kalın…'
+        : mode === 'deep'
+        ? 'Derin TMDB Expansion başlatıldı (~5000+ hedef). Çoklu strateji, uzun sürebilir, sayfada kalın…'
+        : 'Platform bazlı TMDB keşfi başlatıldı (Netflix, Prime, Max, Disney+, MUBI, TV+). Sayfada kalın…'
     );
 
     try {

@@ -188,7 +188,7 @@ async function persistAvailability(
 
     // Stale handling: existing rows for this title NOT in the current set →
     // mark unavailable (but only if their previous check was old enough).
-    const seenKeys = new Set(rows.map((r) => `${r.provider_id}:${r.availability_type}`));
+    const seenKeys = new Set(safeRows.map((r) => `${r.provider_id}:${r.availability_type}`));
     const staleCutoff = new Date(Date.now() - AVAILABILITY_FRESH_HOURS * 3600 * 1000).toISOString();
     const { data: existing } = await sb
       .from("content_availability")

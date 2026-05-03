@@ -478,6 +478,19 @@ async function processOne(
         }
       }
       if (availRows.length > 0) {
+        // Detect existing rows for new vs updated metric
+        const { data: existingAvail } = await sb
+          .from("content_availability")
+          .select("provider_id, availability_type")
+          .eq("title_id", titleId)
+          .eq("region", "TR")
+          .in("provider_id", Array.from(new Set(availRows.map((r) => r.provider_id))));
+        const existingKeys = new Set(
+          (existingAvail || []).map((r: any) => `${r.provider_id}::${r.availability_type}`),
+        );
+        const newCount = availRows.filter((r) => !existingKeys.has(`${r.provider_id}::${r.availability_type}`)).length;
+        const existingCount = availRows.length - newCount;
+
         const { error: availErr } = await sb
           .from("content_availability")
           .upsert(availRows, { onConflict: "title_id,provider_id,region,availability_type" });
@@ -486,6 +499,8 @@ async function processOne(
           stats.errors++;
         } else {
           stats.availability_rows += availRows.length;
+          stats.availability_new += newCount;
+          stats.availability_existing += existingCount;
           src.availability_rows += availRows.length;
         }
       }

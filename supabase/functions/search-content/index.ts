@@ -283,19 +283,32 @@ async function enrichCandidate(
     firecrawlEligible.length > 0;
 
   if (shouldRunFirecrawl) {
-    const text = await firecrawlSearchText(detail.title, cand.release_year);
-    if (text) {
+    const fc = await firecrawlSearchText(detail.title, cand.release_year);
+    if (fc.text || fc.results.length > 0) {
       usedFirecrawl = true;
-      // Only consider providers TMDB didn't already supply
-      const fcResults = extractProvidersFromText(text, firecrawlEligible, detail.title);
-      for (const { provider: p, confidence } of fcResults) {
+      const fcResults = extractProvidersFromText(
+        fc.text,
+        firecrawlEligible,
+        detail.title,
+        fc.results,
+      );
+      let added = 0;
+      let rejected = 0;
+      for (const ext of fcResults) {
+        const { provider: p, confidence, source_url, raw_payload } = ext;
         if (seen.has(p.slug)) continue;
+        // Defense in depth: never persist firecrawl rows without evidence.
+        if (!source_url || !raw_payload || Object.keys(raw_payload).length === 0) {
+          rejected++;
+          continue;
+        }
         seen.add(p.slug);
+        added++;
         platforms.push({
           name: p.display_name,
           logo: null,
           type: "subscription",
-          link: null,
+          link: source_url,
           source: "firecrawl",
         });
         availabilityRows.push({
@@ -303,12 +316,13 @@ async function enrichCandidate(
           source: "firecrawl",
           availability_type: "stream",
           confidence,
-          source_url: null,
+          source_url,
+          raw_payload,
         });
       }
       console.log(
-        `[hapl] firecrawl gap-fill: title="${detail.title}" added=${fcResults.length} ` +
-        `tmdb_count=${platforms.length - fcResults.length}`,
+        `[hapl] firecrawl gap-fill: title="${detail.title}" added=${added} rejected=${rejected} ` +
+        `query="${fc.query}" results=${fc.results.length}`,
       );
     }
   }

@@ -50,14 +50,19 @@ export function CatalogSeedPanel() {
     setProgress(null);
     setTotalElapsedMs(0);
 
-    const initialParams = mode === 'small'
-      ? { pages_primary: 1, pages_secondary: 1, pages_docs: 1, vote_floor: 20 }
-      : { pages_primary: 3, pages_secondary: 2, pages_docs: 2, vote_floor: 20 };
+    const initialParams =
+      mode === 'small'
+        ? { pages_primary: 1, pages_secondary: 1, pages_docs: 1, vote_floor: 20 }
+        : mode === 'large'
+        ? { pages_primary: 3, pages_secondary: 2, pages_docs: 2, vote_floor: 20 }
+        : { pages_primary: 8, pages_secondary: 5, pages_docs: 4, vote_floor: 15 };
 
     toast.info(
       mode === 'small'
         ? 'Küçük seed başlatıldı (~300 içerik). Lütfen 1-2 dakika bekleyin…'
-        : 'Büyük seed başlatıldı (~1000 içerik). Birden fazla chunk halinde çalışacak…'
+        : mode === 'large'
+        ? 'Büyük seed başlatıldı (~1000 içerik). Birden fazla chunk halinde çalışacak…'
+        : 'Geniş seed başlatıldı (~3000 hedef). Çok sayıda chunk halinde çalışacak, sayfada kalın…'
     );
 
     try {

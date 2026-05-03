@@ -163,6 +163,7 @@ interface Cursor {
   vote_floor: number;
   stats: SeedStats;
   sources: Record<string, SourceStats>;
+  baseline?: Baseline;
 }
 
 function buildPlan(

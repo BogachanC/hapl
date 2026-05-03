@@ -543,13 +543,47 @@ serve(async (req) => {
     );
     const results = enriched.filter((r): r is ContentResultOut => r !== null);
 
+    // ── Final ranking: provider/watchable signal must dominate ─────────────
+    // Even after relevance + alias merging, provider-less or weakly-related
+    // entries can surface near the top because TMDB popularity inflates them.
+    // Build a composite final score that:
+    //   • boosts watchable titles (platforms.length > 0) strongly,
+    //   • penalises provider-less entries unless they're an exact title match,
+    //   • keeps exact normalized title match as the tie-breaker for queries
+    //     like "Dark", "Friends", "Behzat".
+    const qNormFinal = normalizeTitle(query);
+    const rankedById = new Map<string, number>();
+    for (const r of ranked) rankedById.set(`${r.media_type}:${r.id}`, r.score);
+
+    const scored = results.map((r) => {
+      const baseRel = rankedById.get(`${r.type}:${r.id}`) ?? 0.5;
+      const titleNorm = normalizeTitle(r.title);
+      const isExact = titleNorm === qNormFinal;
+      const hasProvider = r.platforms.length > 0;
+      // Watchable boost: 0.30 — large but not enough to flip an unrelated title.
+      const watchBoost = hasProvider ? 0.30 : 0;
+      // Provider-less penalty: only when it's NOT an exact title match.
+      // Without this, TMDB-popular but provider-less items (book entries,
+      // alias hits like Stranger Things → Montauk) creep up.
+      const noProviderPenalty = (!hasProvider && !isExact) ? 0.45 : 0;
+      // Exact title nudge so canonical match wins over equally-watchable siblings.
+      const exactNudge = isExact ? 0.10 : 0;
+      // Confidence (0..100) acts as a soft secondary signal.
+      const confSignal = (r.confidence ?? 0) / 1000; // up to 0.10
+      const finalScore = baseRel + watchBoost + exactNudge + confSignal - noProviderPenalty;
+      return { r, finalScore, baseRel, hasProvider, isExact };
+    });
+
+    scored.sort((a, b) => b.finalScore - a.finalScore);
+    const sortedResults = scored.map((s) => s.r);
+
     // 4. Cache & return (cache only when we have TR-available results)
-    const trAvailable = results.filter((r) => r.available_in_tr);
+    const trAvailable = sortedResults.filter((r) => r.available_in_tr);
     if (trAvailable.length > 0) {
-      writeToCache(sb, key, results).catch((e) => console.error("cache write:", e));
+      writeToCache(sb, key, sortedResults).catch((e) => console.error("cache write:", e));
     }
 
-    return new Response(JSON.stringify({ results, cached: false }), {
+    return new Response(JSON.stringify({ results: sortedResults, cached: false }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (err: any) {

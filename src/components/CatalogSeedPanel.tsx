@@ -158,6 +158,14 @@ export function CatalogSeedPanel() {
         >
           Geniş (~3000)
         </Button>
+        <Button
+          variant={mode === 'deep' ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => setMode('deep')}
+          disabled={running}
+        >
+          Derin (~5000+)
+        </Button>
       </div>
 
       <Button onClick={runSeed} disabled={running} className="w-full gap-2">

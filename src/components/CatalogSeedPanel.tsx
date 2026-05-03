@@ -134,6 +134,14 @@ export function CatalogSeedPanel() {
         >
           Büyük (~1000)
         </Button>
+        <Button
+          variant={mode === 'wide' ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => setMode('wide')}
+          disabled={running}
+        >
+          Geniş (~3000)
+        </Button>
       </div>
 
       <Button onClick={runSeed} disabled={running} className="w-full gap-2">

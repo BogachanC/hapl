@@ -272,6 +272,7 @@ async function processOne(
   providers: ProviderRow[],
   stats: SeedStats,
   src: SourceStats,
+  verifyTmdbProviderId?: number,
 ): Promise<void> {
   try {
     const [detail, watch] = await Promise.all([
@@ -286,6 +287,24 @@ async function processOne(
     if (!detail.poster_path) {
       stats.skipped_no_poster++;
       return;
+    }
+
+    // Provider-targeted verification: ensure target provider truly appears
+    // in TR watch/providers (any bucket). If not, skip availability write
+    // entirely — but still upsert the title (it's a valid TR-visible title).
+    let providerVerified = true;
+    if (typeof verifyTmdbProviderId === "number") {
+      const allBuckets = [
+        ...(watch.flatrate || []),
+        ...(watch.free || []),
+        ...(watch.ads || []),
+        ...(watch.rent || []),
+        ...(watch.buy || []),
+      ];
+      providerVerified = allBuckets.some((wp: any) => wp.provider_id === verifyTmdbProviderId);
+      if (!providerVerified) {
+        stats.skipped_provider_unverified++;
+      }
     }
 
     const now = new Date().toISOString();
@@ -328,46 +347,49 @@ async function processOne(
     stats.kind_counts[kind] = (stats.kind_counts[kind] || 0) + 1;
     const titleId = titleData.id;
 
-    const availRows: any[] = [];
-    const buckets: Array<{ type: string; list: any[] }> = [
-      { type: "stream", list: watch.flatrate },
-      { type: "free",   list: watch.free },
-      { type: "ads",    list: watch.ads },
-      { type: "rent",   list: watch.rent },
-      { type: "buy",    list: watch.buy },
-    ];
-    const seenKey = new Set<string>();
-    for (const bucket of buckets) {
-      for (const wp of bucket.list || []) {
-        const matched = matchTmdbProvider(wp.provider_name, providers);
-        if (!matched) continue;
-        const k = `${matched.id}::${bucket.type}`;
-        if (seenKey.has(k)) continue;
-        seenKey.add(k);
-        availRows.push({
-          title_id: titleId,
-          provider_id: matched.id,
-          region: "TR",
-          availability_type: bucket.type,
-          status: "available",
-          source: "tmdb",
-          confidence: tmdbConfidenceFor(bucket.type),
-          checked_at: now,
-          last_seen_at: now,
-          raw_payload: { provider_id: wp.provider_id, provider_name: wp.provider_name },
-        });
+    if (providerVerified) {
+      const availRows: any[] = [];
+      const buckets: Array<{ type: string; list: any[] }> = [
+        { type: "stream", list: watch.flatrate },
+        { type: "free",   list: watch.free },
+        { type: "ads",    list: watch.ads },
+        { type: "rent",   list: watch.rent },
+        { type: "buy",    list: watch.buy },
+      ];
+      const seenKey = new Set<string>();
+      for (const bucket of buckets) {
+        for (const wp of bucket.list || []) {
+          const matched = matchTmdbProvider(wp.provider_name, providers);
+          if (!matched) continue;
+          const k = `${matched.id}::${bucket.type}`;
+          if (seenKey.has(k)) continue;
+          seenKey.add(k);
+          availRows.push({
+            title_id: titleId,
+            provider_id: matched.id,
+            region: "TR",
+            availability_type: bucket.type,
+            status: "available",
+            source: "tmdb",
+            confidence: tmdbConfidenceFor(bucket.type),
+            checked_at: now,
+            last_seen_at: now,
+            raw_payload: { provider_id: wp.provider_id, provider_name: wp.provider_name },
+          });
+          stats.provider_counts[matched.slug] = (stats.provider_counts[matched.slug] || 0) + 1;
+        }
       }
-    }
-    if (availRows.length > 0) {
-      const { error: availErr } = await sb
-        .from("content_availability")
-        .upsert(availRows, { onConflict: "title_id,provider_id,region,availability_type" });
-      if (availErr) {
-        console.error("[seed] availability upsert failed:", availErr.message);
-        stats.errors++;
-      } else {
-        stats.availability_rows += availRows.length;
-        src.availability_rows += availRows.length;
+      if (availRows.length > 0) {
+        const { error: availErr } = await sb
+          .from("content_availability")
+          .upsert(availRows, { onConflict: "title_id,provider_id,region,availability_type" });
+        if (availErr) {
+          console.error("[seed] availability upsert failed:", availErr.message);
+          stats.errors++;
+        } else {
+          stats.availability_rows += availRows.length;
+          src.availability_rows += availRows.length;
+        }
       }
     }
 

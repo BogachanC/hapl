@@ -404,9 +404,20 @@ export function CatalogSeedPanel() {
             )}
           </div>
           {errorMsg && <div className="text-destructive/90 break-all">{errorMsg}</div>}
+          {debugInfo && (
+            <div className="rounded-md border border-border/50 bg-background/50 p-2 text-[10px] text-muted-foreground space-y-0.5">
+              <div>Function: <span className="font-mono text-foreground">{debugInfo.functionName}</span></div>
+              <div>Action: <span className="font-mono text-foreground">{debugInfo.action}</span></div>
+              <div>Job ID: <span className="font-mono text-foreground break-all">{debugInfo.jobId || activeJobId}</span></div>
+              <div>Error: <span className="font-mono text-foreground break-all">{debugInfo.errorMessage}</span></div>
+            </div>
+          )}
           <div className="flex flex-wrap gap-2">
             <Button size="sm" onClick={resumeJob} disabled={running} className="gap-1 h-8 text-xs">
               <Play className="h-3 w-3" /> Devam Et
+            </Button>
+            <Button size="sm" variant="outline" onClick={refreshJobStatus} disabled={running} className="gap-1 h-8 text-xs">
+              <RotateCw className="h-3 w-3" /> Durumu Yenile
             </Button>
             <Button size="sm" variant="outline" onClick={discardJob} disabled={running} className="gap-1 h-8 text-xs">
               <RotateCw className="h-3 w-3" /> Baştan Başlat

@@ -199,6 +199,10 @@ export interface TmdbDiscoverOptions {
   sortBy?: string;               // default "popularity.desc"
   language?: string;             // default "tr-TR"
   voteCountGte?: number;         // floor noise (e.g. 20)
+  voteAverageGte?: number;       // for vote_average.desc strategy
+  releaseDateGte?: string;       // YYYY-MM-DD; primary_release_date.gte / first_air_date.gte
+  releaseDateLte?: string;       // YYYY-MM-DD upper bound
+  withOriginalLanguage?: string; // e.g. "tr"
   includeAdult?: boolean;
 }
 

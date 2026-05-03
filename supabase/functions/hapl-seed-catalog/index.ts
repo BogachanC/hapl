@@ -565,8 +565,10 @@ serve(async (req: Request) => {
   if (body.cursor && typeof body.cursor === "object" && Array.isArray(body.cursor.jobs)) {
     cursor = body.cursor as Cursor;
     if (!cursor.stats.kind_counts) cursor.stats.kind_counts = {};
+    if (!cursor.stats.provider_counts) cursor.stats.provider_counts = {};
     if (typeof cursor.stats.skipped_no_poster !== "number") cursor.stats.skipped_no_poster = 0;
     if (typeof cursor.stats.skipped_no_tr_availability !== "number") cursor.stats.skipped_no_tr_availability = 0;
+    if (typeof cursor.stats.skipped_provider_unverified !== "number") cursor.stats.skipped_provider_unverified = 0;
   } else {
     const voteFloor = Math.max(0, body.vote_floor ?? DEFAULT_VOTE_FLOOR);
     const providersFilter: string[] | null = Array.isArray(body.providers) && body.providers.length > 0
@@ -585,6 +587,18 @@ serve(async (req: Request) => {
         recent_year_from: body.recent_year_from ?? 2022,
       };
       jobs = buildDeepPlan(cfg, providersFilter);
+    } else if (body.mode === "provider-targeted") {
+      const cfg: ProviderTargetedConfig = {
+        pages_per_strategy: Math.max(1, Math.min(20, body.pages_per_strategy ?? 5)),
+        vote_count_floor: Math.max(0, body.vote_count_floor ?? 10),
+        vote_average_floor: Math.max(0, body.vote_average_floor ?? 6.5),
+        strategies: Array.isArray(body.strategies) && body.strategies.length > 0
+          ? body.strategies
+          : ["popularity", "vote_count", "vote_average", "recent"],
+        recent_year_from: body.recent_year_from ?? 2022,
+        providers: providersFilter ?? undefined,
+      };
+      jobs = buildProviderTargetedPlan(cfg);
     } else {
       const pagesPrimary = Math.max(0, Math.min(20, body.pages_primary ?? DEFAULT_PAGES_PRIMARY));
       const pagesSecondary = Math.max(0, Math.min(20, body.pages_secondary ?? DEFAULT_PAGES_SECONDARY));
@@ -601,7 +615,9 @@ serve(async (req: Request) => {
         discovered: 0, titles_upserted: 0, availability_rows: 0,
         aliases_added: 0, aliases_skipped_cached: 0, errors: 0,
         skipped_no_poster: 0, skipped_no_tr_availability: 0,
+        skipped_provider_unverified: 0,
         kind_counts: {},
+        provider_counts: {},
       },
       sources: {},
     };

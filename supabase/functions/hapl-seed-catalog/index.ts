@@ -730,7 +730,10 @@ serve(async (req: Request) => {
       job_index: 0,
       vote_floor: voteFloor,
       stats: {
-        discovered: 0, titles_upserted: 0, availability_rows: 0,
+        discovered: 0,
+        titles_processed: 0, titles_new: 0, titles_existing: 0,
+        titles_upserted: 0,
+        availability_rows: 0, availability_new: 0, availability_existing: 0,
         aliases_added: 0, aliases_skipped_cached: 0, errors: 0,
         skipped_no_poster: 0, skipped_no_tr_availability: 0,
         skipped_provider_unverified: 0,
@@ -739,6 +742,41 @@ serve(async (req: Request) => {
       },
       sources: {},
     };
+
+    // Baseline coverage for delta reporting (single-provider modes)
+    let baselineSlug: string | null = null;
+    if ((body.mode === "provider-full" || body.mode === "provider-targeted")
+        && providersFilter && providersFilter.length === 1) {
+      baselineSlug = providersFilter[0];
+    }
+    const baseline: Baseline = {
+      target_slug: baselineSlug,
+      target_provider_id: null,
+      titles_total_before: 0,
+      target_avail_before: 0,
+      target_available_titles_before: 0,
+    };
+    try {
+      const totalQ = await sb.from("content_titles").select("id", { count: "exact", head: true });
+      baseline.titles_total_before = totalQ.count ?? 0;
+      if (baselineSlug) {
+        const prov = providers.find((p) => p.slug === baselineSlug);
+        if (prov) {
+          baseline.target_provider_id = prov.id;
+          const availQ = await sb
+            .from("content_availability")
+            .select("title_id", { count: "exact", head: true })
+            .eq("provider_id", prov.id)
+            .eq("region", "TR")
+            .eq("status", "available");
+          baseline.target_avail_before = availQ.count ?? 0;
+          baseline.target_available_titles_before = availQ.count ?? 0;
+        }
+      }
+    } catch (e) {
+      console.warn("[seed] baseline capture failed:", (e as Error).message);
+    }
+    cursor.baseline = baseline;
   }
 
   const t0 = Date.now();

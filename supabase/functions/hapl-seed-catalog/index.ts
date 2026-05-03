@@ -90,8 +90,13 @@ function deriveContentKind(
 
 interface SeedStats {
   discovered: number;
-  titles_upserted: number;
-  availability_rows: number;
+  titles_processed: number;        // total titles we touched (new + existing)
+  titles_new: number;              // first-time inserts
+  titles_existing: number;         // already existed, refreshed
+  titles_upserted: number;         // back-compat: == titles_processed
+  availability_rows: number;       // total rows written (new + updated)
+  availability_new: number;
+  availability_existing: number;
   aliases_added: number;
   aliases_skipped_cached: number;
   errors: number;
@@ -100,6 +105,27 @@ interface SeedStats {
   skipped_provider_unverified: number;
   kind_counts: Record<string, number>;
   provider_counts: Record<string, number>;
+}
+
+interface Baseline {
+  target_slug: string | null;
+  target_provider_id: string | null;
+  titles_total_before: number;
+  target_avail_before: number;
+  target_available_titles_before: number;
+}
+
+interface CoverageDelta {
+  target_slug: string;
+  titles_total_before: number;
+  titles_total_after: number;
+  titles_total_delta: number;
+  target_avail_before: number;
+  target_avail_after: number;
+  target_avail_delta: number;
+  target_available_titles_before: number;
+  target_available_titles_after: number;
+  target_available_titles_delta: number;
 }
 
 interface SourceStats {

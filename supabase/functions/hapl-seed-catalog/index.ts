@@ -823,6 +823,30 @@ serve(async (req: Request) => {
       .maybeSingle();
     if (jobInsErr) console.warn("[seed] job insert failed:", jobInsErr.message);
     jobId = jobIns?.id ?? null;
+
+    // Prepare mode: return job_id immediately so frontend can persist it
+    // before any long-running chunk work begins. Caller then loops with
+    // { action: "continue", job_id } to actually do the work.
+    if (isPrepare) {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          done: false,
+          status: "partial",
+          job_id: jobId,
+          next_cursor: null,
+          plan_total: cursor.jobs.length,
+          processed_jobs: 0,
+          jobs_done_this_chunk: 0,
+          stats: cursor.stats,
+          sources: [],
+          coverage_delta: null,
+          error: null,
+          elapsed_ms: 0,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
   }
 
   const t0 = Date.now();

@@ -256,13 +256,10 @@ serve(async (req: Request) => {
         };
       }).filter((p) => p.slug);
 
-      // TR display normalization: HBO Max catalog is bundled inside TV+ in Turkey.
-      // If both providers appear on a title, suppress HBO Max from the user-facing
-      // platforms array. Internal availability rows are preserved for audit.
-      const slugSet = new Set(platforms.map((p) => p.slug));
-      const displayPlatforms = slugSet.has("tv-plus")
-        ? platforms.filter((p) => p.slug !== "max" && p.slug !== "hbo-max")
-        : platforms;
+      // Both HBO Max and TV+ are shown when present. The provider_rule trigger
+      // ensures HBO Max-only titles also get a derived TV+ row, but we never
+      // suppress HBO Max from the user-facing list — they are distinct apps.
+      const displayPlatforms = platforms;
 
       if (displayPlatforms.length === 0) continue;
       const maxConf = Math.max(...displayPlatforms.map((p) => p.confidence));

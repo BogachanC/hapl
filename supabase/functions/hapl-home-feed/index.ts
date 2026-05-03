@@ -256,8 +256,16 @@ serve(async (req: Request) => {
         };
       }).filter((p) => p.slug);
 
-      if (platforms.length === 0) continue;
-      const maxConf = Math.max(...platforms.map((p) => p.confidence));
+      // TR display normalization: HBO Max catalog is bundled inside TV+ in Turkey.
+      // If both providers appear on a title, suppress HBO Max from the user-facing
+      // platforms array. Internal availability rows are preserved for audit.
+      const slugSet = new Set(platforms.map((p) => p.slug));
+      const displayPlatforms = slugSet.has("tv-plus")
+        ? platforms.filter((p) => p.slug !== "max" && p.slug !== "hbo-max")
+        : platforms;
+
+      if (displayPlatforms.length === 0) continue;
+      const maxConf = Math.max(...displayPlatforms.map((p) => p.confidence));
 
       items.push({
         id: t.id,
@@ -272,7 +280,7 @@ serve(async (req: Request) => {
         imdb_rating: meta?.vote_average ? Math.round(Number(meta.vote_average) * 10) / 10 : null,
         vote_count: Number(meta?.vote_count ?? 0),
         genres: t.genres || [],
-        platforms,
+        platforms: displayPlatforms,
         available_in_tr: true,
         confidence: maxConf,
         _score: score,

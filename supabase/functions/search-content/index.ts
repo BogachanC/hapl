@@ -45,6 +45,25 @@ interface PlatformOut {
   type: "subscription" | "rent" | "free";
   link: string | null;
   source?: "tmdb" | "firecrawl";
+  slug?: string;
+}
+
+// TR display normalization: HBO Max catalog is bundled inside TV+ in Turkey.
+// If both appear, suppress HBO Max from the user-facing platforms array.
+// Internal content_availability rows are preserved for audit.
+function normalizeDisplayPlatformsTR<T extends { slug?: string; name?: string }>(
+  list: T[],
+): T[] {
+  const slugs = new Set(list.map((p) => (p.slug || "").toLowerCase()));
+  const names = new Set(list.map((p) => (p.name || "").toLowerCase()));
+  const hasTvPlus = slugs.has("tv-plus") || names.has("tv+") || names.has("tv plus");
+  if (!hasTvPlus) return list;
+  return list.filter((p) => {
+    const s = (p.slug || "").toLowerCase();
+    const n = (p.name || "").toLowerCase();
+    const isHboMax = s === "max" || s === "hbo-max" || n === "hbo max" || n === "max";
+    return !isHboMax;
+  });
 }
 
 interface ContentResultOut {
@@ -259,6 +278,7 @@ async function enrichCandidate(
         type,
         link: watch.link,
         source: "tmdb",
+        slug: match.slug,
       });
       availabilityRows.push({
         provider_id: match.id,
@@ -319,6 +339,7 @@ async function enrichCandidate(
           type: "subscription",
           link: source_url,
           source: "firecrawl",
+          slug: p.slug,
         });
         availabilityRows.push({
           provider_id: p.id,
@@ -389,7 +410,7 @@ async function enrichCandidate(
     imdb_rating: detail.vote_average ? Math.round(detail.vote_average * 10) / 10 : null,
     vote_count: detail.vote_count,
     genres: (detail.genres || []).map((g: any) => g.name),
-    platforms,
+    platforms: normalizeDisplayPlatformsTR(platforms),
     tmdb_url: `https://www.themoviedb.org/${cand.media_type}/${cand.id}`,
     available_in_tr: platforms.length > 0,
     confidence,

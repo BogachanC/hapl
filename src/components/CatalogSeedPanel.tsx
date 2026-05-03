@@ -11,6 +11,7 @@ interface SeedStats {
   aliases_added: number;
   aliases_skipped_cached?: number;
   errors: number;
+  kind_counts?: Record<string, number>;
 }
 
 interface SourceStats {
@@ -34,12 +35,12 @@ interface ChunkResponse {
   elapsed_ms: number;
 }
 
-const MAX_CHUNKS = 30; // safety cap
+const MAX_CHUNKS = 80; // safety cap
 
 export function CatalogSeedPanel() {
   const [running, setRunning] = useState(false);
   const [lastResult, setLastResult] = useState<ChunkResponse | null>(null);
-  const [mode, setMode] = useState<'small' | 'large'>('small');
+  const [mode, setMode] = useState<'small' | 'large' | 'wide'>('small');
   const [progress, setProgress] = useState<{ chunks: number; processed: number; total: number } | null>(null);
   const [totalElapsedMs, setTotalElapsedMs] = useState(0);
 
@@ -49,14 +50,19 @@ export function CatalogSeedPanel() {
     setProgress(null);
     setTotalElapsedMs(0);
 
-    const initialParams = mode === 'small'
-      ? { pages_primary: 1, pages_secondary: 1, pages_docs: 1, vote_floor: 20 }
-      : { pages_primary: 3, pages_secondary: 2, pages_docs: 2, vote_floor: 20 };
+    const initialParams =
+      mode === 'small'
+        ? { pages_primary: 1, pages_secondary: 1, pages_docs: 1, vote_floor: 20 }
+        : mode === 'large'
+        ? { pages_primary: 3, pages_secondary: 2, pages_docs: 2, vote_floor: 20 }
+        : { pages_primary: 8, pages_secondary: 5, pages_docs: 4, vote_floor: 15 };
 
     toast.info(
       mode === 'small'
         ? 'Küçük seed başlatıldı (~300 içerik). Lütfen 1-2 dakika bekleyin…'
-        : 'Büyük seed başlatıldı (~1000 içerik). Birden fazla chunk halinde çalışacak…'
+        : mode === 'large'
+        ? 'Büyük seed başlatıldı (~1000 içerik). Birden fazla chunk halinde çalışacak…'
+        : 'Geniş seed başlatıldı (~3000 hedef). Çok sayıda chunk halinde çalışacak, sayfada kalın…'
     );
 
     try {
@@ -128,6 +134,14 @@ export function CatalogSeedPanel() {
         >
           Büyük (~1000)
         </Button>
+        <Button
+          variant={mode === 'wide' ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => setMode('wide')}
+          disabled={running}
+        >
+          Geniş (~3000)
+        </Button>
       </div>
 
       <Button onClick={runSeed} disabled={running} className="w-full gap-2">
@@ -174,6 +188,19 @@ export function CatalogSeedPanel() {
                   <div key={s.source} className="flex justify-between text-muted-foreground">
                     <span className="font-medium text-foreground">{s.source}</span>
                     <span>{s.titles_upserted} title · {s.availability_rows} avail · {s.aliases_added} alias</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+          {lastResult.stats.kind_counts && Object.keys(lastResult.stats.kind_counts).length > 0 && (
+            <>
+              <div className="font-bold text-foreground pt-2">Kategori dağılımı</div>
+              <div className="space-y-1">
+                {Object.entries(lastResult.stats.kind_counts).map(([k, v]) => (
+                  <div key={k} className="flex justify-between text-muted-foreground">
+                    <span className="font-medium text-foreground">{k}</span>
+                    <span>{v}</span>
                   </div>
                 ))}
               </div>

@@ -95,6 +95,7 @@ interface SeedStats {
   aliases_added: number;
   aliases_skipped_cached: number;
   errors: number;
+  kind_counts: Record<string, number>;
 }
 
 interface SourceStats {
@@ -214,6 +215,8 @@ async function processOne(
     }
     stats.titles_upserted++;
     src.titles_upserted++;
+    const kind = titleRow.content_kind || "unknown";
+    stats.kind_counts[kind] = (stats.kind_counts[kind] || 0) + 1;
     const titleId = titleData.id;
 
     const availRows: any[] = [];
@@ -361,10 +364,11 @@ serve(async (req: Request) => {
   let cursor: Cursor;
   if (body.cursor && typeof body.cursor === "object" && Array.isArray(body.cursor.jobs)) {
     cursor = body.cursor as Cursor;
+    if (!cursor.stats.kind_counts) cursor.stats.kind_counts = {};
   } else {
-    const pagesPrimary = Math.max(0, Math.min(10, body.pages_primary ?? DEFAULT_PAGES_PRIMARY));
-    const pagesSecondary = Math.max(0, Math.min(10, body.pages_secondary ?? DEFAULT_PAGES_SECONDARY));
-    const pagesDocs = Math.max(0, Math.min(10, body.pages_docs ?? DEFAULT_DOC_PAGES));
+    const pagesPrimary = Math.max(0, Math.min(20, body.pages_primary ?? DEFAULT_PAGES_PRIMARY));
+    const pagesSecondary = Math.max(0, Math.min(20, body.pages_secondary ?? DEFAULT_PAGES_SECONDARY));
+    const pagesDocs = Math.max(0, Math.min(20, body.pages_docs ?? DEFAULT_DOC_PAGES));
     const voteFloor = Math.max(0, body.vote_floor ?? DEFAULT_VOTE_FLOOR);
     const providersFilter: string[] | null = Array.isArray(body.providers) && body.providers.length > 0
       ? body.providers : null;
@@ -377,6 +381,7 @@ serve(async (req: Request) => {
       stats: {
         discovered: 0, titles_upserted: 0, availability_rows: 0,
         aliases_added: 0, aliases_skipped_cached: 0, errors: 0,
+        kind_counts: {},
       },
       sources: {},
     };

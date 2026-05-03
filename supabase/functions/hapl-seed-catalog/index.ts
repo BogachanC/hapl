@@ -622,6 +622,11 @@ serve(async (req: Request) => {
     if (typeof cursor.stats.skipped_no_poster !== "number") cursor.stats.skipped_no_poster = 0;
     if (typeof cursor.stats.skipped_no_tr_availability !== "number") cursor.stats.skipped_no_tr_availability = 0;
     if (typeof cursor.stats.skipped_provider_unverified !== "number") cursor.stats.skipped_provider_unverified = 0;
+    if (typeof cursor.stats.titles_processed !== "number") cursor.stats.titles_processed = cursor.stats.titles_upserted ?? 0;
+    if (typeof cursor.stats.titles_new !== "number") cursor.stats.titles_new = 0;
+    if (typeof cursor.stats.titles_existing !== "number") cursor.stats.titles_existing = 0;
+    if (typeof cursor.stats.availability_new !== "number") cursor.stats.availability_new = 0;
+    if (typeof cursor.stats.availability_existing !== "number") cursor.stats.availability_existing = 0;
   } else {
     const voteFloor = Math.max(0, body.vote_floor ?? DEFAULT_VOTE_FLOOR);
     const providersFilter: string[] | null = Array.isArray(body.providers) && body.providers.length > 0

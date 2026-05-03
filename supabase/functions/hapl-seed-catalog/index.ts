@@ -37,9 +37,9 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
 };
 
-// Soft time budget per chunk. 150s is the hard edge-runtime idle limit;
-// we return well before that so the response can flush.
-const SOFT_TIME_BUDGET_MS = 75_000;
+// Soft time budget per chunk. Keep well below the 150s hard idle limit so
+// the response can flush and we can persist progress to DB before timeout.
+const SOFT_TIME_BUDGET_MS = 45_000;
 
 // ─── Configuration ────────────────────────────────────────────────────────
 const TMDB_PROVIDERS_TR: Array<{ slug: string; tmdb_id: number; priority: "primary" | "secondary" }> = [

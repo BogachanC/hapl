@@ -277,6 +277,11 @@ async function processOne(
       stats.errors++;
       return;
     }
+    // Quality guard: poster required
+    if (!detail.poster_path) {
+      stats.skipped_no_poster++;
+      return;
+    }
 
     const now = new Date().toISOString();
     const titleRow = {

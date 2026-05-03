@@ -418,6 +418,15 @@ async function processOne(
       last_full_sync_at: now,
     };
 
+    // Detect new vs existing for accurate metrics
+    const { data: existingTitle } = await sb
+      .from("content_titles")
+      .select("id")
+      .eq("tmdb_id", detail.id)
+      .eq("tmdb_type", item.media_type)
+      .maybeSingle();
+    const wasNewTitle = !existingTitle;
+
     const { data: titleData, error: titleErr } = await sb
       .from("content_titles")
       .upsert(titleRow, { onConflict: "tmdb_id,tmdb_type" })
@@ -428,7 +437,9 @@ async function processOne(
       stats.errors++;
       return;
     }
+    stats.titles_processed++;
     stats.titles_upserted++;
+    if (wasNewTitle) stats.titles_new++; else stats.titles_existing++;
     src.titles_upserted++;
     const kind = titleRow.content_kind || "unknown";
     stats.kind_counts[kind] = (stats.kind_counts[kind] || 0) + 1;

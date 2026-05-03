@@ -166,12 +166,26 @@ interface Cursor {
   baseline?: Baseline;
 }
 
+// Stale job watchdog: any running/partial job whose heartbeat is older than
+// this threshold is considered stale (proxy timeout / browser closed before
+// the chunk loop recorded a partial state). UI can offer "mark failed".
+const STALE_THRESHOLD_MS = 10 * 60 * 1000;
+
+function isJobStale(jobRow: any): boolean {
+  if (!jobRow) return false;
+  if (jobRow.status !== "running" && jobRow.status !== "partial") return false;
+  const ts = jobRow.last_heartbeat_at || jobRow.updated_at;
+  if (!ts) return true;
+  return Date.now() - new Date(ts).getTime() > STALE_THRESHOLD_MS;
+}
+
 function jobToSummary(jobRow: any) {
   const params = jobRow?.params || {};
   const cursor = jobRow?.cursor || null;
   return {
     id: jobRow.id,
     status: jobRow.status,
+    is_stale: isJobStale(jobRow),
     mode: jobRow.mode,
     selected_provider_slug: Array.isArray(params.providers) && params.providers.length === 1
       ? params.providers[0]
@@ -676,7 +690,7 @@ serve(async (req: Request) => {
     const { data: jobRow, error: jobErr } = await sb
       .from("catalog_seed_jobs")
       .select("*")
-      .neq("status", "completed")
+      .in("status", ["running", "partial"])
       .gte("created_at", since)
       .order("updated_at", { ascending: false })
       .limit(1)
@@ -690,6 +704,115 @@ serve(async (req: Request) => {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
+
+  if (action === "mark_failed") {
+    if (!jobId) {
+      return new Response(JSON.stringify({ ok: false, error: "job_id required" }), {
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const reason = typeof body.reason === "string" ? body.reason : "manually marked failed";
+    await sb.from("catalog_seed_jobs").update({
+      status: "stale_failed",
+      last_error: reason,
+      completed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      last_heartbeat_at: new Date().toISOString(),
+    }).eq("id", jobId);
+    return new Response(JSON.stringify({ ok: true, job_id: jobId, status: "stale_failed" }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  if (action === "cleanup_stale") {
+    // Sweep: any running/partial with stale heartbeat → stale_failed.
+    const cutoff = new Date(Date.now() - STALE_THRESHOLD_MS).toISOString();
+    const { data: stale } = await sb
+      .from("catalog_seed_jobs")
+      .select("id")
+      .in("status", ["running", "partial"])
+      .lt("last_heartbeat_at", cutoff);
+    let cleaned = 0;
+    for (const r of stale || []) {
+      await sb.from("catalog_seed_jobs").update({
+        status: "stale_failed",
+        last_error: "stale heartbeat watchdog",
+        completed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }).eq("id", r.id);
+      cleaned++;
+    }
+    return new Response(JSON.stringify({ ok: true, cleaned }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  if (action === "verify_providers") {
+    // Live re-verify a TMDB title against /watch/providers TR and compare
+    // with current DB availability rows. Read-only; no writes.
+    const tmdbId = Number(body.tmdb_id);
+    const tmdbType = body.tmdb_type;
+    if (!tmdbId || (tmdbType !== "movie" && tmdbType !== "tv")) {
+      return new Response(JSON.stringify({ ok: false, error: "tmdb_id + tmdb_type (movie|tv) required" }), {
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    try {
+      const watch = await tmdbWatchProvidersTR(tmdbType, tmdbId);
+      const liveProviderIds = new Set<number>();
+      for (const list of [watch.flatrate, watch.free, watch.ads, watch.rent, watch.buy]) {
+        for (const p of list || []) liveProviderIds.add(p.provider_id);
+      }
+      const liveNames = [
+        ...watch.flatrate.map((p: any) => `${p.provider_name} (stream)`),
+        ...watch.free.map((p: any) => `${p.provider_name} (free)`),
+        ...watch.ads.map((p: any) => `${p.provider_name} (ads)`),
+        ...watch.rent.map((p: any) => `${p.provider_name} (rent)`),
+        ...watch.buy.map((p: any) => `${p.provider_name} (buy)`),
+      ];
+
+      const { data: title } = await sb
+        .from("content_titles")
+        .select("id, title, release_year")
+        .eq("tmdb_id", tmdbId).eq("tmdb_type", tmdbType).maybeSingle();
+      let dbRows: any[] = [];
+      if (title?.id) {
+        const { data } = await sb
+          .from("content_availability")
+          .select("provider_id, status, source, availability_type, confidence, raw_payload, streaming_providers!inner(slug, display_name)")
+          .eq("title_id", title.id).eq("region", "TR");
+        dbRows = data || [];
+      }
+      const dbAvailable = dbRows
+        .filter((r: any) => r.status === "available")
+        .map((r: any) => ({
+          slug: r.streaming_providers?.slug,
+          name: r.streaming_providers?.display_name,
+          source: r.source,
+          availability_type: r.availability_type,
+          tmdb_provider_id: r.raw_payload?.provider_id ?? null,
+        }));
+
+      const dbTmdbIds = new Set(dbAvailable.map((r) => r.tmdb_provider_id).filter(Boolean));
+      const onlyInDb = dbAvailable.filter((r) => r.tmdb_provider_id && !liveProviderIds.has(r.tmdb_provider_id));
+      const onlyInLive = [...liveProviderIds].filter((id) => !dbTmdbIds.has(id));
+
+      return new Response(JSON.stringify({
+        ok: true,
+        tmdb_id: tmdbId, tmdb_type: tmdbType,
+        title: title?.title || null,
+        live_providers: liveNames,
+        db_available: dbAvailable,
+        diff: { only_in_db: onlyInDb, only_in_live_provider_ids: onlyInLive },
+        watch_link: watch.link,
+      }, null, 2), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    } catch (e: any) {
+      return new Response(JSON.stringify({ ok: false, error: e?.message || "verify failed" }), {
+        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+  }
+
   const providers = await loadProviders(sb);
   if (providers.length === 0) {
     return new Response(JSON.stringify({ ok: false, error: "no providers configured" }), {

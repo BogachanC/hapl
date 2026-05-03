@@ -63,7 +63,8 @@ interface ChunkResponse {
 
 interface SeedJobSummary {
   id: string;
-  status: 'running' | 'partial' | 'paused' | 'failed' | 'completed' | string;
+  status: 'running' | 'partial' | 'paused' | 'failed' | 'stale_failed' | 'completed' | string;
+  is_stale?: boolean;
   selected_provider_slug?: string | null;
   current_strategy?: string | null;
   current_media_type?: string | null;
@@ -74,6 +75,7 @@ interface SeedJobSummary {
   plan_total?: number | null;
   last_error?: string | null;
   updated_at?: string | null;
+  last_heartbeat_at?: string | null;
   stats?: SeedStats;
   sources?: SourceStats[];
   coverage_delta?: CoverageDelta | null;
@@ -115,6 +117,7 @@ export function CatalogSeedPanel() {
   const [progress, setProgress] = useState<{ chunks: number; processed: number; total: number } | null>(null);
   const [totalElapsedMs, setTotalElapsedMs] = useState(0);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [activeJobStale, setActiveJobStale] = useState(false);
   const [interrupted, setInterrupted] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [debugInfo, setDebugInfo] = useState<FunctionDebug | null>(null);
@@ -159,8 +162,13 @@ export function CatalogSeedPanel() {
     const total = job.plan_total ?? job.total_pages ?? 0;
     setProgress({ chunks: 0, processed, total });
     setLastResult(resultFromJob(job));
+    setActiveJobStale(!!job.is_stale);
     setInterrupted(markInterrupted || job.status !== 'completed');
-    setErrorMsg(job.last_error || (job.status === 'running' ? CONNECTION_ERROR_MESSAGE : null));
+    setErrorMsg(
+      job.last_error ||
+      (job.is_stale ? 'Önceki katalog işi stale durumda kaldı (heartbeat 10 dk üzeri).' :
+       (job.status === 'running' ? CONNECTION_ERROR_MESSAGE : null))
+    );
   };
 
   const invokeSeedFunction = async (action: string, body: Record<string, any>) => {
@@ -381,11 +389,28 @@ export function CatalogSeedPanel() {
 
   const discardJob = () => {
     clearActiveJob();
+    setActiveJobStale(false);
     setInterrupted(false);
     setErrorMsg(null);
     setDebugInfo(null);
     setLastResult(null);
     toast.info('Yarım kalan iş atıldı.');
+  };
+
+  const markFailedJob = async () => {
+    if (!activeJobId) return;
+    try {
+      await invokeSeedFunction('mark_failed', { job_id: activeJobId, reason: 'manuel kapatıldı (admin panel)' });
+      toast.success('Job failed olarak kapatıldı.');
+      clearActiveJob();
+      setActiveJobStale(false);
+      setInterrupted(false);
+      setErrorMsg(null);
+      setDebugInfo(null);
+      setLastResult(null);
+    } catch (e: any) {
+      toast.error('Failed olarak kapatılamadı: ' + (e?.message || 'bilinmeyen hata'));
+    }
   };
 
   return (
@@ -403,7 +428,9 @@ export function CatalogSeedPanel() {
         <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 space-y-2 text-xs">
           <div className="flex items-center gap-2 font-bold text-destructive">
             <AlertTriangle className="h-3.5 w-3.5" />
-            {interrupted ? 'Keşif yarıda kesildi' : 'Yarım kalan iş bulundu'}
+            {activeJobStale
+              ? 'Önceki katalog işi stale durumda kaldı'
+              : (interrupted ? 'Keşif yarıda kesildi' : 'Yarım kalan iş bulundu')}
           </div>
           <div className="text-muted-foreground">
             Job: <span className="font-mono text-foreground">{activeJobId.slice(0, 8)}…</span>
@@ -411,6 +438,11 @@ export function CatalogSeedPanel() {
               <> · Son başarılı chunk: <span className="text-foreground">{lastResult.processed_jobs} / {lastResult.plan_total}</span></>
             )}
           </div>
+          {activeJobStale && (
+            <div className="text-[11px] text-muted-foreground italic">
+              Heartbeat 10 dakikadan eski. Cursor taşımıyorsa "Baştan Başlat" önerilir.
+            </div>
+          )}
           {errorMsg && <div className="text-destructive/90 break-all">{errorMsg}</div>}
           {debugInfo && (
             <div className="rounded-md border border-border/50 bg-background/50 p-2 text-[10px] text-muted-foreground space-y-0.5">
@@ -429,6 +461,9 @@ export function CatalogSeedPanel() {
             </Button>
             <Button size="sm" variant="outline" onClick={discardJob} disabled={running} className="gap-1 h-8 text-xs">
               <RotateCw className="h-3 w-3" /> Baştan Başlat
+            </Button>
+            <Button size="sm" variant="destructive" onClick={markFailedJob} disabled={running} className="gap-1 h-8 text-xs">
+              <AlertTriangle className="h-3 w-3" /> Failed olarak kapat
             </Button>
           </div>
         </div>

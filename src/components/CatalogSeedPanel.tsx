@@ -117,6 +117,7 @@ export function CatalogSeedPanel() {
   const [progress, setProgress] = useState<{ chunks: number; processed: number; total: number } | null>(null);
   const [totalElapsedMs, setTotalElapsedMs] = useState(0);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [activeJobStale, setActiveJobStale] = useState(false);
   const [interrupted, setInterrupted] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [debugInfo, setDebugInfo] = useState<FunctionDebug | null>(null);

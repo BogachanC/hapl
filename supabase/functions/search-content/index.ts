@@ -48,23 +48,10 @@ interface PlatformOut {
   slug?: string;
 }
 
-// TR display normalization: HBO Max catalog is bundled inside TV+ in Turkey.
-// If both appear, suppress HBO Max from the user-facing platforms array.
-// Internal content_availability rows are preserved for audit.
-function normalizeDisplayPlatformsTR<T extends { slug?: string; name?: string }>(
-  list: T[],
-): T[] {
-  const slugs = new Set(list.map((p) => (p.slug || "").toLowerCase()));
-  const names = new Set(list.map((p) => (p.name || "").toLowerCase()));
-  const hasTvPlus = slugs.has("tv-plus") || names.has("tv+") || names.has("tv plus");
-  if (!hasTvPlus) return list;
-  return list.filter((p) => {
-    const s = (p.slug || "").toLowerCase();
-    const n = (p.name || "").toLowerCase();
-    const isHboMax = s === "max" || s === "hbo-max" || n === "hbo max" || n === "max";
-    return !isHboMax;
-  });
-}
+// HBO Max and TV+ are distinct apps. Even though TV+ in Turkey bundles the
+// HBO Max catalog inside, users may still open the HBO Max app directly, so
+// both badges should appear when both are available. We do NOT suppress
+// HBO Max from the display.
 
 interface ContentResultOut {
   id: number;

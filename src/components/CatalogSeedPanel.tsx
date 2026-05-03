@@ -202,6 +202,7 @@ export function CatalogSeedPanel() {
             <div>Alias eklenen:</div>      <div className="text-foreground font-medium">{lastResult.stats.aliases_added}</div>
             <div>Alias cache hit:</div>    <div className="text-foreground font-medium">{lastResult.stats.aliases_skipped_cached ?? 0}</div>
             <div>Hata:</div>               <div className="text-foreground font-medium">{lastResult.stats.errors}</div>
+            <div>Postersiz atlanan:</div>  <div className="text-foreground font-medium">{lastResult.stats.skipped_no_poster ?? 0}</div>
             <div>Toplam süre:</div>        <div className="text-foreground font-medium">{(totalElapsedMs / 1000).toFixed(1)}s</div>
           </div>
           {lastResult.sources?.length > 0 && (

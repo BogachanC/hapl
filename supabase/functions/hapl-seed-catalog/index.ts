@@ -166,6 +166,34 @@ interface Cursor {
   baseline?: Baseline;
 }
 
+function jobToSummary(jobRow: any) {
+  const params = jobRow?.params || {};
+  const cursor = jobRow?.cursor || null;
+  return {
+    id: jobRow.id,
+    status: jobRow.status,
+    mode: jobRow.mode,
+    selected_provider_slug: Array.isArray(params.providers) && params.providers.length === 1
+      ? params.providers[0]
+      : (typeof params.provider === "string" ? params.provider : null),
+    current_strategy: jobRow.current_strategy,
+    current_media_type: jobRow.current_type,
+    current_page: jobRow.current_page,
+    total_pages: jobRow.plan_total,
+    processed_count: jobRow.processed_jobs,
+    processed_jobs: jobRow.processed_jobs,
+    plan_total: jobRow.plan_total,
+    current_provider: jobRow.current_provider,
+    last_error: jobRow.last_error,
+    updated_at: jobRow.updated_at,
+    last_heartbeat_at: jobRow.last_heartbeat_at,
+    stats: jobRow.stats || {},
+    sources: jobRow.sources || [],
+    coverage_delta: jobRow.coverage_delta || null,
+    has_cursor: !!cursor,
+  };
+}
+
 function buildPlan(
   pagesPrimary: number,
   pagesSecondary: number,
@@ -606,13 +634,6 @@ serve(async (req: Request) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
 
-  const providers = await loadProviders(sb);
-  if (providers.length === 0) {
-    return new Response(JSON.stringify({ error: "no providers configured" }), {
-      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-
   // ─── Job persistence helpers ───────────────────────────────────────────
   async function persistJob(jobId: string, patch: Record<string, any>) {
     try {
@@ -629,8 +650,54 @@ serve(async (req: Request) => {
   let cursor: Cursor;
   let jobId: string | null = typeof body.job_id === "string" ? body.job_id : null;
   const action: string = typeof body.action === "string" ? body.action : "";
+  if (action === "status") {
+    if (!jobId) {
+      return new Response(JSON.stringify({ ok: false, error: "job_id required" }), {
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const { data: jobRow, error: jobErr } = await sb
+      .from("catalog_seed_jobs")
+      .select("*")
+      .eq("id", jobId)
+      .maybeSingle();
+    if (jobErr || !jobRow) {
+      return new Response(JSON.stringify({ ok: false, error: "job not found" }), {
+        status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({ ok: true, job: jobToSummary(jobRow) }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  if (action === "latest_incomplete") {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data: jobRow, error: jobErr } = await sb
+      .from("catalog_seed_jobs")
+      .select("*")
+      .neq("status", "completed")
+      .gte("created_at", since)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (jobErr) {
+      return new Response(JSON.stringify({ ok: false, error: jobErr.message }), {
+        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({ ok: true, job: jobRow ? jobToSummary(jobRow) : null }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  const providers = await loadProviders(sb);
+  if (providers.length === 0) {
+    return new Response(JSON.stringify({ ok: false, error: "no providers configured" }), {
+      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
   const isResume = (action === "continue" || !!body.resume) && !!jobId;
-  const isPrepare = action === "prepare";
+  const isStart = action === "start" || action === "prepare";
 
   if (isResume) {
     const { data: jobRow, error: jobErr } = await sb
@@ -824,10 +891,10 @@ serve(async (req: Request) => {
     if (jobInsErr) console.warn("[seed] job insert failed:", jobInsErr.message);
     jobId = jobIns?.id ?? null;
 
-    // Prepare mode: return job_id immediately so frontend can persist it
+    // Start mode: return job_id immediately so frontend can persist it
     // before any long-running chunk work begins. Caller then loops with
     // { action: "continue", job_id } to actually do the work.
-    if (isPrepare) {
+    if (isStart) {
       return new Response(
         JSON.stringify({
           ok: true,

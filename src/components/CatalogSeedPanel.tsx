@@ -61,8 +61,36 @@ interface ChunkResponse {
   elapsed_ms: number;
 }
 
+interface SeedJobSummary {
+  id: string;
+  status: 'running' | 'partial' | 'paused' | 'failed' | 'completed' | string;
+  selected_provider_slug?: string | null;
+  current_strategy?: string | null;
+  current_media_type?: string | null;
+  current_page?: number | null;
+  total_pages?: number | null;
+  processed_count?: number | null;
+  processed_jobs?: number | null;
+  plan_total?: number | null;
+  last_error?: string | null;
+  updated_at?: string | null;
+  stats?: SeedStats;
+  sources?: SourceStats[];
+  coverage_delta?: CoverageDelta | null;
+}
+
+interface FunctionDebug {
+  functionName: string;
+  action: string;
+  jobId?: string | null;
+  errorMessage: string;
+}
+
 const MAX_CHUNKS = 800;
-const ACTIVE_JOB_KEY = 'hapl.catalog_seed.active_job_id';
+const ACTIVE_JOB_KEY = 'hapl_active_catalog_seed_job_id';
+const LEGACY_ACTIVE_JOB_KEY = 'hapl.catalog_seed.active_job_id';
+const SEED_FUNCTION = 'hapl-seed-catalog';
+const CONNECTION_ERROR_MESSAGE = 'Bağlantı koptu veya proxy hata verdi. Job kaydı korunuyor. Devam etmeyi deneyebilirsin.';
 
 type SeedMode = 'small' | 'large' | 'wide' | 'deep' | 'provider-targeted';
 type ProviderSlug = 'all' | 'netflix' | 'amazon-prime-video' | 'max' | 'disney-plus' | 'mubi' | 'tv-plus';
@@ -89,54 +117,94 @@ export function CatalogSeedPanel() {
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [interrupted, setInterrupted] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [debugInfo, setDebugInfo] = useState<FunctionDebug | null>(null);
 
   const isProviderMode = mode === 'provider-targeted';
   const isSinglePlatform = isProviderMode && providerSlug !== 'all';
   const fullDisabled = !isSinglePlatform;
 
-  // Restore last interrupted job from localStorage + DB on mount
+  const persistActiveJob = (jobId: string) => {
+    setActiveJobId(jobId);
+    localStorage.setItem(ACTIVE_JOB_KEY, jobId);
+    localStorage.removeItem(LEGACY_ACTIVE_JOB_KEY);
+  };
+
+  const clearActiveJob = () => {
+    setActiveJobId(null);
+    localStorage.removeItem(ACTIVE_JOB_KEY);
+    localStorage.removeItem(LEGACY_ACTIVE_JOB_KEY);
+  };
+
+  const resultFromJob = (job: SeedJobSummary): ChunkResponse => ({
+    ok: job.status !== 'failed',
+    done: job.status === 'completed',
+    status: job.status === 'completed' ? 'completed' : (job.status === 'failed' ? 'failed' : 'partial'),
+    job_id: job.id,
+    next_cursor: null,
+    plan_total: job.plan_total ?? job.total_pages ?? 0,
+    processed_jobs: job.processed_jobs ?? job.processed_count ?? 0,
+    jobs_done_this_chunk: 0,
+    stats: (job.stats as SeedStats) ?? {
+      discovered: 0, titles_upserted: 0, availability_rows: 0, aliases_added: 0, errors: 0,
+    },
+    sources: job.sources ?? [],
+    coverage_delta: job.coverage_delta ?? null,
+    error: job.last_error ?? null,
+    elapsed_ms: 0,
+  });
+
+  const applyJobSummary = (job: SeedJobSummary, markInterrupted = true) => {
+    persistActiveJob(job.id);
+    const processed = job.processed_jobs ?? job.processed_count ?? 0;
+    const total = job.plan_total ?? job.total_pages ?? 0;
+    setProgress({ chunks: 0, processed, total });
+    setLastResult(resultFromJob(job));
+    setInterrupted(markInterrupted || job.status !== 'completed');
+    setErrorMsg(job.last_error || (job.status === 'running' ? CONNECTION_ERROR_MESSAGE : null));
+  };
+
+  const invokeSeedFunction = async (action: string, body: Record<string, any>) => {
+    const res = await supabase.functions.invoke(SEED_FUNCTION, { body: { ...body, action } });
+    if (res.error) {
+      setDebugInfo({ functionName: SEED_FUNCTION, action, jobId: body.job_id ?? null, errorMessage: res.error.message || String(res.error) });
+      throw res.error;
+    }
+    setDebugInfo(null);
+    return res.data;
+  };
+
+  const fetchJobStatus = async (id: string): Promise<SeedJobSummary | null> => {
+    const data = await invokeSeedFunction('status', { job_id: id }) as { ok: boolean; job?: SeedJobSummary | null };
+    return data?.ok ? (data.job ?? null) : null;
+  };
+
+  const findLatestIncomplete = async (): Promise<SeedJobSummary | null> => {
+    const data = await invokeSeedFunction('latest_incomplete', {}) as { ok: boolean; job?: SeedJobSummary | null };
+    return data?.ok ? (data.job ?? null) : null;
+  };
+
+  // Restore last interrupted job from localStorage or backend status on mount
   useEffect(() => {
-    const saved = localStorage.getItem(ACTIVE_JOB_KEY);
-    if (!saved) return;
-    setActiveJobId(saved);
+    const saved = localStorage.getItem(ACTIVE_JOB_KEY) || localStorage.getItem(LEGACY_ACTIVE_JOB_KEY);
     (async () => {
-      const { data, error } = await supabase
-        .from('catalog_seed_jobs')
-        .select('id, status, plan_total, processed_jobs, current_provider, current_strategy, current_page, last_error, updated_at, stats, coverage_delta, sources')
-        .eq('id', saved)
-        .maybeSingle();
-      if (error || !data) return;
-      if (data.status === 'completed') {
-        localStorage.removeItem(ACTIVE_JOB_KEY);
-        setActiveJobId(null);
-        return;
+      try {
+        const job = saved ? await fetchJobStatus(saved) : await findLatestIncomplete();
+        if (!job) return;
+        if (job.status === 'completed') {
+          if (saved === job.id) clearActiveJob();
+          return;
+        }
+        applyJobSummary(job);
+      } catch (e: any) {
+        if (saved) {
+          persistActiveJob(saved);
+          setInterrupted(true);
+          setErrorMsg(CONNECTION_ERROR_MESSAGE);
+          setDebugInfo({ functionName: SEED_FUNCTION, action: 'status', jobId: saved, errorMessage: e?.message || 'Status çağrısı başarısız' });
+        }
       }
-      // Treat as interrupted (running but stale heartbeat too)
-      const stale = data.status === 'running' && data.updated_at
-        && (Date.now() - new Date(data.updated_at).getTime()) > 120_000;
-      setInterrupted(true);
-      setErrorMsg(data.last_error || (stale ? 'Job heartbeat eski (>2dk)' : null));
-      setProgress({ chunks: 0, processed: data.processed_jobs ?? 0, total: data.plan_total ?? 0 });
-      setLastResult({
-        ok: true, done: false, status: data.status as any, job_id: data.id,
-        next_cursor: null, plan_total: data.plan_total ?? 0,
-        processed_jobs: data.processed_jobs ?? 0, jobs_done_this_chunk: 0,
-        stats: (data.stats as any) ?? {} as any,
-        sources: (data.sources as any) ?? [],
-        coverage_delta: (data.coverage_delta as any) ?? null,
-        elapsed_ms: 0,
-      });
     })();
   }, []);
-
-  const fetchJobFromDb = async (id: string) => {
-    const { data } = await supabase
-      .from('catalog_seed_jobs')
-      .select('id, status, plan_total, processed_jobs, last_error, updated_at, current_provider, current_strategy, current_page')
-      .eq('id', id)
-      .maybeSingle();
-    return data;
-  };
 
   const drive = async (initialBody: any, label: string, existingJobId?: string) => {
     setRunning(true);
@@ -154,26 +222,29 @@ export function CatalogSeedPanel() {
     let body: any = initialBody;
     let currentJobId: string | null = existingJobId ?? null;
 
-    // Prepare phase: persist job_id ASAP before long work starts
+    // Start phase: persist job_id ASAP before long work starts
     if (!existingJobId) {
       try {
-        const prep = await supabase.functions.invoke('hapl-seed-catalog', {
-          body: { ...initialBody, action: 'prepare' },
-        });
-        if (prep.error) throw prep.error;
-        const prepData = prep.data as ChunkResponse;
+        const prepData = await invokeSeedFunction('start', initialBody) as ChunkResponse;
         if (prepData.job_id) {
           currentJobId = prepData.job_id;
-          setActiveJobId(prepData.job_id);
-          localStorage.setItem(ACTIVE_JOB_KEY, prepData.job_id);
+          persistActiveJob(prepData.job_id);
           setLastResult(prepData);
           setProgress({ chunks: 0, processed: 0, total: prepData.plan_total });
         }
       } catch (e: any) {
         const msg = e?.message || 'Hazırlık aşamasında hata';
-        setErrorMsg(msg);
+        setErrorMsg(CONNECTION_ERROR_MESSAGE);
+        try {
+          const job = await findLatestIncomplete();
+          if (job && job.status !== 'completed') {
+            applyJobSummary(job);
+          }
+        } catch {
+          setDebugInfo({ functionName: SEED_FUNCTION, action: 'start', jobId: null, errorMessage: msg });
+        }
         setRunning(false);
-        toast.error('Keşif başlatılamadı: ' + msg);
+        toast.warning(CONNECTION_ERROR_MESSAGE);
         return;
       }
       body = currentJobId ? { action: 'continue', job_id: currentJobId } : initialBody;
@@ -181,16 +252,14 @@ export function CatalogSeedPanel() {
 
     try {
       while (chunkCount < MAX_CHUNKS) {
-        const { data, error } = await supabase.functions.invoke('hapl-seed-catalog', { body });
-        if (error) throw error;
-        const chunk = data as ChunkResponse;
+        if (!currentJobId) throw new Error('Aktif job_id bulunamadı');
+        const chunk = await invokeSeedFunction('continue', { job_id: currentJobId }) as ChunkResponse;
         chunkCount++;
         lastChunk = chunk;
 
         if (chunk.job_id) {
           currentJobId = chunk.job_id;
-          setActiveJobId(chunk.job_id);
-          localStorage.setItem(ACTIVE_JOB_KEY, chunk.job_id);
+          persistActiveJob(chunk.job_id);
         }
 
         setProgress({ chunks: chunkCount, processed: chunk.processed_jobs, total: chunk.plan_total });
@@ -202,15 +271,11 @@ export function CatalogSeedPanel() {
         }
         if (chunk.done) break;
 
-        body = currentJobId
-          ? { action: 'continue', job_id: currentJobId }
-          : (chunk.next_cursor ? { cursor: chunk.next_cursor } : null);
-        if (!body) break;
+        body = { action: 'continue', job_id: currentJobId };
       }
 
       if (lastChunk?.done) {
-        localStorage.removeItem(ACTIVE_JOB_KEY);
-        setActiveJobId(null);
+        clearActiveJob();
         toast.success(
           `Seed tamamlandı (${chunkCount} chunk): ${lastChunk.stats.titles_upserted} içerik, ${lastChunk.stats.availability_rows} platform kaydı`,
         );
@@ -221,27 +286,27 @@ export function CatalogSeedPanel() {
     } catch (e: any) {
       const msg = e?.message || 'Bilinmeyen hata';
       setInterrupted(true);
-      // Proxy/network error: response gelmedi. DB'den son job durumunu çek.
+      setErrorMsg(CONNECTION_ERROR_MESSAGE);
       if (currentJobId) {
-        const job = await fetchJobFromDb(currentJobId);
-        if (job) {
-          setProgress({ chunks: chunkCount, processed: job.processed_jobs ?? 0, total: job.plan_total ?? 0 });
-          if (job.status === 'completed') {
-            localStorage.removeItem(ACTIVE_JOB_KEY);
-            setActiveJobId(null);
-            setInterrupted(false);
-            toast.success('Keşif tamamlandı (DB onayı).');
-            setRunning(false);
-            return;
+        persistActiveJob(currentJobId);
+        try {
+          const job = await fetchJobStatus(currentJobId);
+          if (job) {
+            applyJobSummary(job);
+            if (job.status === 'completed') {
+              clearActiveJob();
+              setInterrupted(false);
+              toast.success('Keşif tamamlandı (DB onayı).');
+              setRunning(false);
+              return;
+            }
+            setErrorMsg(CONNECTION_ERROR_MESSAGE);
           }
-          setErrorMsg(`Bağlantı kesildi ama iş durumu kaydedildi (${job.processed_jobs}/${job.plan_total}). Kaldığı yerden devam edebilirsin.`);
-          toast.warning('Bağlantı koptu — Devam Et ile sürdürebilirsin.');
-          setRunning(false);
-          return;
+        } catch {
+          setDebugInfo({ functionName: SEED_FUNCTION, action: 'continue', jobId: currentJobId, errorMessage: msg });
         }
       }
-      setErrorMsg(msg);
-      toast.error('Keşif yarıda kesildi: ' + msg);
+      toast.warning(CONNECTION_ERROR_MESSAGE);
     } finally {
       setRunning(false);
     }
@@ -289,11 +354,36 @@ export function CatalogSeedPanel() {
     await drive({ action: 'continue', job_id: activeJobId }, `Devam: ${activeJobId.slice(0, 8)}`, activeJobId);
   };
 
+  const refreshJobStatus = async () => {
+    if (!activeJobId) return;
+    try {
+      const job = await fetchJobStatus(activeJobId);
+      if (!job) {
+        setErrorMsg(CONNECTION_ERROR_MESSAGE);
+        return;
+      }
+      if (job.status === 'completed') {
+        setLastResult(resultFromJob(job));
+        clearActiveJob();
+        setInterrupted(false);
+        toast.success('Job tamamlanmış görünüyor.');
+        return;
+      }
+      applyJobSummary(job);
+      toast.info('Job durumu yenilendi.');
+    } catch (e: any) {
+      persistActiveJob(activeJobId);
+      setInterrupted(true);
+      setErrorMsg(CONNECTION_ERROR_MESSAGE);
+      setDebugInfo({ functionName: SEED_FUNCTION, action: 'status', jobId: activeJobId, errorMessage: e?.message || 'Status çağrısı başarısız' });
+    }
+  };
+
   const discardJob = () => {
-    localStorage.removeItem(ACTIVE_JOB_KEY);
-    setActiveJobId(null);
+    clearActiveJob();
     setInterrupted(false);
     setErrorMsg(null);
+    setDebugInfo(null);
     setLastResult(null);
     toast.info('Yarım kalan iş atıldı.');
   };
@@ -322,9 +412,20 @@ export function CatalogSeedPanel() {
             )}
           </div>
           {errorMsg && <div className="text-destructive/90 break-all">{errorMsg}</div>}
+          {debugInfo && (
+            <div className="rounded-md border border-border/50 bg-background/50 p-2 text-[10px] text-muted-foreground space-y-0.5">
+              <div>Function: <span className="font-mono text-foreground">{debugInfo.functionName}</span></div>
+              <div>Action: <span className="font-mono text-foreground">{debugInfo.action}</span></div>
+              <div>Job ID: <span className="font-mono text-foreground break-all">{debugInfo.jobId || activeJobId}</span></div>
+              <div>Error: <span className="font-mono text-foreground break-all">{debugInfo.errorMessage}</span></div>
+            </div>
+          )}
           <div className="flex flex-wrap gap-2">
             <Button size="sm" onClick={resumeJob} disabled={running} className="gap-1 h-8 text-xs">
               <Play className="h-3 w-3" /> Devam Et
+            </Button>
+            <Button size="sm" variant="outline" onClick={refreshJobStatus} disabled={running} className="gap-1 h-8 text-xs">
+              <RotateCw className="h-3 w-3" /> Durumu Yenile
             </Button>
             <Button size="sm" variant="outline" onClick={discardJob} disabled={running} className="gap-1 h-8 text-xs">
               <RotateCw className="h-3 w-3" /> Baştan Başlat

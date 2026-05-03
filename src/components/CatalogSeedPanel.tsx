@@ -313,19 +313,45 @@ export function CatalogSeedPanel() {
             </div>
           )}
           <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-muted-foreground">
-            <div>Bulunan:</div>           <div className="text-foreground font-medium">{lastResult.stats.discovered}</div>
-            <div>Yazılan içerik:</div>     <div className="text-foreground font-medium">{lastResult.stats.titles_upserted}</div>
-            <div>Platform kaydı:</div>     <div className="text-foreground font-medium">{lastResult.stats.availability_rows}</div>
-            <div>Alias eklenen:</div>      <div className="text-foreground font-medium">{lastResult.stats.aliases_added}</div>
-            <div>Alias cache hit:</div>    <div className="text-foreground font-medium">{lastResult.stats.aliases_skipped_cached ?? 0}</div>
-            <div>Hata:</div>               <div className="text-foreground font-medium">{lastResult.stats.errors}</div>
-            <div>Postersiz atlanan:</div>  <div className="text-foreground font-medium">{lastResult.stats.skipped_no_poster ?? 0}</div>
-            <div>Provider doğrulanmadı:</div><div className="text-foreground font-medium">{lastResult.stats.skipped_provider_unverified ?? 0}</div>
-            <div>Toplam süre:</div>        <div className="text-foreground font-medium">{(totalElapsedMs / 1000).toFixed(1)}s</div>
+            <div>Bulunan:</div>                <div className="text-foreground font-medium">{lastResult.stats.discovered}</div>
+            <div>İşlenen içerik:</div>         <div className="text-foreground font-medium">{lastResult.stats.titles_processed ?? lastResult.stats.titles_upserted}</div>
+            <div>Yeni eklenen içerik:</div>    <div className="text-foreground font-medium">{lastResult.stats.titles_new ?? 0}</div>
+            <div>Güncellenen içerik:</div>     <div className="text-foreground font-medium">{lastResult.stats.titles_existing ?? 0}</div>
+            <div>Platform kaydı (toplam):</div><div className="text-foreground font-medium">{lastResult.stats.availability_rows}</div>
+            <div>· yeni eklenen:</div>         <div className="text-foreground font-medium">{lastResult.stats.availability_new ?? 0}</div>
+            <div>· güncellenen:</div>          <div className="text-foreground font-medium">{lastResult.stats.availability_existing ?? 0}</div>
+            <div>Alias eklenen:</div>          <div className="text-foreground font-medium">{lastResult.stats.aliases_added}</div>
+            <div>Alias cache hit:</div>        <div className="text-foreground font-medium">{lastResult.stats.aliases_skipped_cached ?? 0}</div>
+            <div>Provider doğrulanmadı:</div>  <div className="text-foreground font-medium">{lastResult.stats.skipped_provider_unverified ?? 0}</div>
+            <div>Postersiz atlanan:</div>      <div className="text-foreground font-medium">{lastResult.stats.skipped_no_poster ?? 0}</div>
+            <div>Hata:</div>                   <div className="text-foreground font-medium">{lastResult.stats.errors}</div>
+            <div>Toplam süre:</div>            <div className="text-foreground font-medium">{(totalElapsedMs / 1000).toFixed(1)}s</div>
           </div>
+
+          {lastResult.coverage_delta && (
+            <>
+              <div className="font-bold text-foreground pt-2">Coverage Delta ({lastResult.coverage_delta.target_slug})</div>
+              <div className="grid grid-cols-3 gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+                <div></div><div className="text-right">Önce</div><div className="text-right">Sonra (Δ)</div>
+                <div>Toplam içerik</div>
+                <div className="text-right text-foreground">{lastResult.coverage_delta.titles_total_before}</div>
+                <div className="text-right text-foreground">{lastResult.coverage_delta.titles_total_after} (+{lastResult.coverage_delta.titles_total_delta})</div>
+                <div>Hedef platform avail.</div>
+                <div className="text-right text-foreground">{lastResult.coverage_delta.target_avail_before}</div>
+                <div className="text-right text-foreground">{lastResult.coverage_delta.target_avail_after} (+{lastResult.coverage_delta.target_avail_delta})</div>
+                <div>Hedef available title</div>
+                <div className="text-right text-foreground">{lastResult.coverage_delta.target_available_titles_before}</div>
+                <div className="text-right text-foreground">{lastResult.coverage_delta.target_available_titles_after} (+{lastResult.coverage_delta.target_available_titles_delta})</div>
+              </div>
+            </>
+          )}
+
           {lastResult.stats.provider_counts && Object.keys(lastResult.stats.provider_counts).length > 0 && (
             <>
               <div className="font-bold text-foreground pt-2">Platform dağılımı (availability)</div>
+              <p className="text-[10px] text-muted-foreground leading-relaxed">
+                Not: Seçili platform keşif hedefidir. Platform dağılımı, keşfedilen içeriklerin TR'de göründüğü tüm platformları gösterir.
+              </p>
               <div className="space-y-1">
                 {Object.entries(lastResult.stats.provider_counts)
                   .sort((a, b) => b[1] - a[1])

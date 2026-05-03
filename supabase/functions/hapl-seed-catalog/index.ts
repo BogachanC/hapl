@@ -95,6 +95,7 @@ interface SeedStats {
   aliases_added: number;
   aliases_skipped_cached: number;
   errors: number;
+  kind_counts: Record<string, number>;
 }
 
 interface SourceStats {

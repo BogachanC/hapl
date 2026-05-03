@@ -231,6 +231,7 @@ async function enrichCandidate(
   const availabilityRows: Array<{
     provider_id: string; source: "tmdb" | "firecrawl";
     availability_type: string; confidence: number; source_url: string | null;
+    raw_payload?: Record<string, unknown>;
   }> = [];
 
   const pushFromTmdb = (

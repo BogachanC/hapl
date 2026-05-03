@@ -14,6 +14,75 @@ export type Database = {
   }
   public: {
     Tables: {
+      catalog_seed_jobs: {
+        Row: {
+          baseline: Json | null
+          completed_at: string | null
+          coverage_delta: Json | null
+          created_at: string
+          current_page: number | null
+          current_provider: string | null
+          current_strategy: string | null
+          current_type: string | null
+          cursor: Json | null
+          id: string
+          last_error: string | null
+          last_heartbeat_at: string
+          mode: string
+          params: Json
+          plan_total: number
+          processed_jobs: number
+          sources: Json
+          stats: Json
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          baseline?: Json | null
+          completed_at?: string | null
+          coverage_delta?: Json | null
+          created_at?: string
+          current_page?: number | null
+          current_provider?: string | null
+          current_strategy?: string | null
+          current_type?: string | null
+          cursor?: Json | null
+          id?: string
+          last_error?: string | null
+          last_heartbeat_at?: string
+          mode: string
+          params?: Json
+          plan_total?: number
+          processed_jobs?: number
+          sources?: Json
+          stats?: Json
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          baseline?: Json | null
+          completed_at?: string | null
+          coverage_delta?: Json | null
+          created_at?: string
+          current_page?: number | null
+          current_provider?: string | null
+          current_strategy?: string | null
+          current_type?: string | null
+          cursor?: Json | null
+          id?: string
+          last_error?: string | null
+          last_heartbeat_at?: string
+          mode?: string
+          params?: Json
+          plan_total?: number
+          processed_jobs?: number
+          sources?: Json
+          stats?: Json
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       content_availability: {
         Row: {
           availability_type: string

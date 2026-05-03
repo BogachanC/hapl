@@ -634,13 +634,6 @@ serve(async (req: Request) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
 
-  const providers = await loadProviders(sb);
-  if (providers.length === 0) {
-    return new Response(JSON.stringify({ error: "no providers configured" }), {
-      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-
   // ─── Job persistence helpers ───────────────────────────────────────────
   async function persistJob(jobId: string, patch: Record<string, any>) {
     try {
@@ -695,6 +688,12 @@ serve(async (req: Request) => {
     }
     return new Response(JSON.stringify({ ok: true, job: jobRow ? jobToSummary(jobRow) : null }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  const providers = await loadProviders(sb);
+  if (providers.length === 0) {
+    return new Response(JSON.stringify({ ok: false, error: "no providers configured" }), {
+      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
   const isResume = (action === "continue" || !!body.resume) && !!jobId;

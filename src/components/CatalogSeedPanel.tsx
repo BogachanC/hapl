@@ -35,12 +35,12 @@ interface ChunkResponse {
   elapsed_ms: number;
 }
 
-const MAX_CHUNKS = 30; // safety cap
+const MAX_CHUNKS = 80; // safety cap
 
 export function CatalogSeedPanel() {
   const [running, setRunning] = useState(false);
   const [lastResult, setLastResult] = useState<ChunkResponse | null>(null);
-  const [mode, setMode] = useState<'small' | 'large'>('small');
+  const [mode, setMode] = useState<'small' | 'large' | 'wide'>('small');
   const [progress, setProgress] = useState<{ chunks: number; processed: number; total: number } | null>(null);
   const [totalElapsedMs, setTotalElapsedMs] = useState(0);
 

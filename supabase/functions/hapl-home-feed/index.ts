@@ -150,16 +150,23 @@ serve(async (req: Request) => {
     }
     const eligibleTitleIds = Array.from(new Set(filterRows.map((r: any) => r.title_id))).slice(0, POOL_SIZE);
 
-    // Phase B: full availability for those titles (NO provider filter)
-    const { data: availRows, error: availErr } = await sb
-      .from("content_availability")
-      .select("title_id, provider_id, availability_type, confidence")
-      .eq("region", "TR")
-      .eq("status", "available")
-      .in("availability_type", WATCHABLE_TYPES)
-      .gte("confidence", 0.5)
-      .in("title_id", eligibleTitleIds);
-    if (availErr) throw availErr;
+    // Phase B: full availability for those titles (NO provider filter).
+    // Batch in chunks to keep URL length under server/proxy limits (~8KB).
+    const availRows: Array<{ title_id: string; provider_id: string; availability_type: string; confidence: number }> = [];
+    const CHUNK = 80;
+    for (let i = 0; i < eligibleTitleIds.length; i += CHUNK) {
+      const slice = eligibleTitleIds.slice(i, i + CHUNK);
+      const { data: rows, error: availErr } = await sb
+        .from("content_availability")
+        .select("title_id, provider_id, availability_type, confidence")
+        .eq("region", "TR")
+        .eq("status", "available")
+        .in("availability_type", WATCHABLE_TYPES)
+        .gte("confidence", 0.5)
+        .in("title_id", slice);
+      if (availErr) throw availErr;
+      if (rows) availRows.push(...rows as any);
+    }
 
     // Group by title_id
     const byTitle = new Map<string, Array<{ provider_id: string; availability_type: string; confidence: number }>>();

@@ -280,7 +280,7 @@ serve(async (req: Request) => {
         imdb_rating: meta?.vote_average ? Math.round(Number(meta.vote_average) * 10) / 10 : null,
         vote_count: Number(meta?.vote_count ?? 0),
         genres: t.genres || [],
-        platforms,
+        platforms: displayPlatforms,
         available_in_tr: true,
         confidence: maxConf,
         _score: score,

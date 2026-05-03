@@ -94,17 +94,55 @@ export function CatalogSeedPanel() {
   const isSinglePlatform = isProviderMode && providerSlug !== 'all';
   const fullDisabled = !isSinglePlatform;
 
-  // Restore last interrupted job from localStorage
+  // Restore last interrupted job from localStorage + DB on mount
   useEffect(() => {
     const saved = localStorage.getItem(ACTIVE_JOB_KEY);
-    if (saved) setActiveJobId(saved);
+    if (!saved) return;
+    setActiveJobId(saved);
+    (async () => {
+      const { data, error } = await supabase
+        .from('catalog_seed_jobs')
+        .select('id, status, plan_total, processed_jobs, current_provider, current_strategy, current_page, last_error, updated_at, stats, coverage_delta, sources')
+        .eq('id', saved)
+        .maybeSingle();
+      if (error || !data) return;
+      if (data.status === 'completed') {
+        localStorage.removeItem(ACTIVE_JOB_KEY);
+        setActiveJobId(null);
+        return;
+      }
+      // Treat as interrupted (running but stale heartbeat too)
+      const stale = data.status === 'running' && data.updated_at
+        && (Date.now() - new Date(data.updated_at).getTime()) > 120_000;
+      setInterrupted(true);
+      setErrorMsg(data.last_error || (stale ? 'Job heartbeat eski (>2dk)' : null));
+      setProgress({ chunks: 0, processed: data.processed_jobs ?? 0, total: data.plan_total ?? 0 });
+      setLastResult({
+        ok: true, done: false, status: data.status as any, job_id: data.id,
+        next_cursor: null, plan_total: data.plan_total ?? 0,
+        processed_jobs: data.processed_jobs ?? 0, jobs_done_this_chunk: 0,
+        stats: (data.stats as any) ?? {} as any,
+        sources: (data.sources as any) ?? [],
+        coverage_delta: (data.coverage_delta as any) ?? null,
+        elapsed_ms: 0,
+      });
+    })();
   }, []);
 
-  const drive = async (initialBody: any, label: string) => {
+  const fetchJobFromDb = async (id: string) => {
+    const { data } = await supabase
+      .from('catalog_seed_jobs')
+      .select('id, status, plan_total, processed_jobs, last_error, updated_at, current_provider, current_strategy, current_page')
+      .eq('id', id)
+      .maybeSingle();
+    return data;
+  };
+
+  const drive = async (initialBody: any, label: string, existingJobId?: string) => {
     setRunning(true);
     setInterrupted(false);
     setErrorMsg(null);
-    setLastResult(null);
+    if (!existingJobId) setLastResult(null);
     setProgress(null);
     setTotalElapsedMs(0);
 
@@ -114,6 +152,32 @@ export function CatalogSeedPanel() {
     let lastChunk: ChunkResponse | null = null;
     const t0 = Date.now();
     let body: any = initialBody;
+    let currentJobId: string | null = existingJobId ?? null;
+
+    // Prepare phase: persist job_id ASAP before long work starts
+    if (!existingJobId) {
+      try {
+        const prep = await supabase.functions.invoke('hapl-seed-catalog', {
+          body: { ...initialBody, action: 'prepare' },
+        });
+        if (prep.error) throw prep.error;
+        const prepData = prep.data as ChunkResponse;
+        if (prepData.job_id) {
+          currentJobId = prepData.job_id;
+          setActiveJobId(prepData.job_id);
+          localStorage.setItem(ACTIVE_JOB_KEY, prepData.job_id);
+          setLastResult(prepData);
+          setProgress({ chunks: 0, processed: 0, total: prepData.plan_total });
+        }
+      } catch (e: any) {
+        const msg = e?.message || 'Hazırlık aşamasında hata';
+        setErrorMsg(msg);
+        setRunning(false);
+        toast.error('Keşif başlatılamadı: ' + msg);
+        return;
+      }
+      body = currentJobId ? { action: 'continue', job_id: currentJobId } : initialBody;
+    }
 
     try {
       while (chunkCount < MAX_CHUNKS) {
@@ -124,6 +188,7 @@ export function CatalogSeedPanel() {
         lastChunk = chunk;
 
         if (chunk.job_id) {
+          currentJobId = chunk.job_id;
           setActiveJobId(chunk.job_id);
           localStorage.setItem(ACTIVE_JOB_KEY, chunk.job_id);
         }
@@ -137,14 +202,10 @@ export function CatalogSeedPanel() {
         }
         if (chunk.done) break;
 
-        // Continue via job_id (preferred) — falls back to in-memory cursor
-        if (chunk.job_id) {
-          body = { job_id: chunk.job_id, resume: true };
-        } else if (chunk.next_cursor) {
-          body = { cursor: chunk.next_cursor };
-        } else {
-          break;
-        }
+        body = currentJobId
+          ? { action: 'continue', job_id: currentJobId }
+          : (chunk.next_cursor ? { cursor: chunk.next_cursor } : null);
+        if (!body) break;
       }
 
       if (lastChunk?.done) {
@@ -159,8 +220,27 @@ export function CatalogSeedPanel() {
       }
     } catch (e: any) {
       const msg = e?.message || 'Bilinmeyen hata';
-      setErrorMsg(msg);
       setInterrupted(true);
+      // Proxy/network error: response gelmedi. DB'den son job durumunu çek.
+      if (currentJobId) {
+        const job = await fetchJobFromDb(currentJobId);
+        if (job) {
+          setProgress({ chunks: chunkCount, processed: job.processed_jobs ?? 0, total: job.plan_total ?? 0 });
+          if (job.status === 'completed') {
+            localStorage.removeItem(ACTIVE_JOB_KEY);
+            setActiveJobId(null);
+            setInterrupted(false);
+            toast.success('Keşif tamamlandı (DB onayı).');
+            setRunning(false);
+            return;
+          }
+          setErrorMsg(`Bağlantı kesildi ama iş durumu kaydedildi (${job.processed_jobs}/${job.plan_total}). Kaldığı yerden devam edebilirsin.`);
+          toast.warning('Bağlantı koptu — Devam Et ile sürdürebilirsin.');
+          setRunning(false);
+          return;
+        }
+      }
+      setErrorMsg(msg);
       toast.error('Keşif yarıda kesildi: ' + msg);
     } finally {
       setRunning(false);

@@ -364,6 +364,7 @@ serve(async (req: Request) => {
   let cursor: Cursor;
   if (body.cursor && typeof body.cursor === "object" && Array.isArray(body.cursor.jobs)) {
     cursor = body.cursor as Cursor;
+    if (!cursor.stats.kind_counts) cursor.stats.kind_counts = {};
   } else {
     const pagesPrimary = Math.max(0, Math.min(20, body.pages_primary ?? DEFAULT_PAGES_PRIMARY));
     const pagesSecondary = Math.max(0, Math.min(20, body.pages_secondary ?? DEFAULT_PAGES_SECONDARY));

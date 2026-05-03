@@ -147,38 +147,21 @@ export function CatalogSeedPanel() {
         Büyük mod, timeout'tan kaçınmak için chunk'lara bölünür.
       </p>
 
-      <div className="flex gap-2">
-        <Button
-          variant={mode === 'small' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => setMode('small')}
-          disabled={running}
-        >
+      <div className="flex flex-wrap gap-2">
+        <Button variant={mode === 'small' ? 'default' : 'outline'} size="sm" onClick={() => setMode('small')} disabled={running}>
           Küçük (~300)
         </Button>
-        <Button
-          variant={mode === 'large' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => setMode('large')}
-          disabled={running}
-        >
+        <Button variant={mode === 'large' ? 'default' : 'outline'} size="sm" onClick={() => setMode('large')} disabled={running}>
           Büyük (~1000)
         </Button>
-        <Button
-          variant={mode === 'wide' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => setMode('wide')}
-          disabled={running}
-        >
+        <Button variant={mode === 'wide' ? 'default' : 'outline'} size="sm" onClick={() => setMode('wide')} disabled={running}>
           Geniş (~3000)
         </Button>
-        <Button
-          variant={mode === 'deep' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => setMode('deep')}
-          disabled={running}
-        >
+        <Button variant={mode === 'deep' ? 'default' : 'outline'} size="sm" onClick={() => setMode('deep')} disabled={running}>
           Derin (~5000+)
+        </Button>
+        <Button variant={mode === 'provider-targeted' ? 'default' : 'outline'} size="sm" onClick={() => setMode('provider-targeted')} disabled={running}>
+          Platform Bazlı (6 platform)
         </Button>
       </div>
 

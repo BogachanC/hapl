@@ -286,7 +286,7 @@ export function CatalogSeedPanel() {
 
   const resumeJob = async () => {
     if (!activeJobId) return;
-    await drive({ job_id: activeJobId, resume: true }, `Devam: ${activeJobId.slice(0, 8)}`);
+    await drive({ action: 'continue', job_id: activeJobId }, `Devam: ${activeJobId.slice(0, 8)}`, activeJobId);
   };
 
   const discardJob = () => {

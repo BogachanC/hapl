@@ -200,8 +200,24 @@ export function CatalogSeedPanel() {
             <div>Alias cache hit:</div>    <div className="text-foreground font-medium">{lastResult.stats.aliases_skipped_cached ?? 0}</div>
             <div>Hata:</div>               <div className="text-foreground font-medium">{lastResult.stats.errors}</div>
             <div>Postersiz atlanan:</div>  <div className="text-foreground font-medium">{lastResult.stats.skipped_no_poster ?? 0}</div>
+            <div>Provider doğrulanmadı:</div><div className="text-foreground font-medium">{lastResult.stats.skipped_provider_unverified ?? 0}</div>
             <div>Toplam süre:</div>        <div className="text-foreground font-medium">{(totalElapsedMs / 1000).toFixed(1)}s</div>
           </div>
+          {lastResult.stats.provider_counts && Object.keys(lastResult.stats.provider_counts).length > 0 && (
+            <>
+              <div className="font-bold text-foreground pt-2">Platform dağılımı (availability)</div>
+              <div className="space-y-1">
+                {Object.entries(lastResult.stats.provider_counts)
+                  .sort((a, b) => b[1] - a[1])
+                  .map(([k, v]) => (
+                    <div key={k} className="flex justify-between text-muted-foreground">
+                      <span className="font-medium text-foreground">{k}</span>
+                      <span>{v}</span>
+                    </div>
+                  ))}
+              </div>
+            </>
+          )}
           {lastResult.sources?.length > 0 && (
             <>
               <div className="font-bold text-foreground pt-2">Kaynaklar</div>

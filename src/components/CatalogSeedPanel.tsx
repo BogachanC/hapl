@@ -37,12 +37,14 @@ interface ChunkResponse {
   elapsed_ms: number;
 }
 
-const MAX_CHUNKS = 80; // safety cap
+const MAX_CHUNKS = 200; // safety cap (deep mode may need many chunks)
+
+type SeedMode = 'small' | 'large' | 'wide' | 'deep';
 
 export function CatalogSeedPanel() {
   const [running, setRunning] = useState(false);
   const [lastResult, setLastResult] = useState<ChunkResponse | null>(null);
-  const [mode, setMode] = useState<'small' | 'large' | 'wide'>('small');
+  const [mode, setMode] = useState<SeedMode>('small');
   const [progress, setProgress] = useState<{ chunks: number; processed: number; total: number } | null>(null);
   const [totalElapsedMs, setTotalElapsedMs] = useState(0);
 

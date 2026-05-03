@@ -410,7 +410,7 @@ async function enrichCandidate(
     imdb_rating: detail.vote_average ? Math.round(detail.vote_average * 10) / 10 : null,
     vote_count: detail.vote_count,
     genres: (detail.genres || []).map((g: any) => g.name),
-    platforms,
+    platforms: normalizeDisplayPlatformsTR(platforms),
     tmdb_url: `https://www.themoviedb.org/${cand.media_type}/${cand.id}`,
     available_in_tr: platforms.length > 0,
     confidence,

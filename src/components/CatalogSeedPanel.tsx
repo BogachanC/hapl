@@ -286,13 +286,13 @@ export function CatalogSeedPanel() {
           const job = await fetchJobStatus(currentJobId);
           if (job) {
             applyJobSummary(job);
-          }
-          if (job.status === 'completed') {
-            clearActiveJob();
-            setInterrupted(false);
-            toast.success('Keşif tamamlandı (DB onayı).');
-            setRunning(false);
-            return;
+            if (job.status === 'completed') {
+              clearActiveJob();
+              setInterrupted(false);
+              toast.success('Keşif tamamlandı (DB onayı).');
+              setRunning(false);
+              return;
+            }
           }
         } catch {
           setDebugInfo({ functionName: SEED_FUNCTION, action: 'continue', jobId: currentJobId, errorMessage: msg });
@@ -346,11 +346,36 @@ export function CatalogSeedPanel() {
     await drive({ action: 'continue', job_id: activeJobId }, `Devam: ${activeJobId.slice(0, 8)}`, activeJobId);
   };
 
+  const refreshJobStatus = async () => {
+    if (!activeJobId) return;
+    try {
+      const job = await fetchJobStatus(activeJobId);
+      if (!job) {
+        setErrorMsg(CONNECTION_ERROR_MESSAGE);
+        return;
+      }
+      if (job.status === 'completed') {
+        setLastResult(resultFromJob(job));
+        clearActiveJob();
+        setInterrupted(false);
+        toast.success('Job tamamlanmış görünüyor.');
+        return;
+      }
+      applyJobSummary(job);
+      toast.info('Job durumu yenilendi.');
+    } catch (e: any) {
+      persistActiveJob(activeJobId);
+      setInterrupted(true);
+      setErrorMsg(CONNECTION_ERROR_MESSAGE);
+      setDebugInfo({ functionName: SEED_FUNCTION, action: 'status', jobId: activeJobId, errorMessage: e?.message || 'Status çağrısı başarısız' });
+    }
+  };
+
   const discardJob = () => {
-    localStorage.removeItem(ACTIVE_JOB_KEY);
-    setActiveJobId(null);
+    clearActiveJob();
     setInterrupted(false);
     setErrorMsg(null);
+    setDebugInfo(null);
     setLastResult(null);
     toast.info('Yarım kalan iş atıldı.');
   };

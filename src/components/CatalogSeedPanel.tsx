@@ -244,8 +244,8 @@ export function CatalogSeedPanel() {
 
     try {
       while (chunkCount < MAX_CHUNKS) {
-        const action = body?.action === 'continue' ? 'continue' : 'continue';
-        const chunk = await invokeSeedFunction(action, { job_id: currentJobId }) as ChunkResponse;
+        if (!currentJobId) throw new Error('Aktif job_id bulunamadı');
+        const chunk = await invokeSeedFunction('continue', { job_id: currentJobId }) as ChunkResponse;
         chunkCount++;
         lastChunk = chunk;
 
@@ -263,7 +263,6 @@ export function CatalogSeedPanel() {
         }
         if (chunk.done) break;
 
-        if (!currentJobId) break;
         body = { action: 'continue', job_id: currentJobId };
       }
 

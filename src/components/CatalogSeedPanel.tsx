@@ -117,10 +117,61 @@ export function CatalogSeedPanel() {
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [interrupted, setInterrupted] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [debugInfo, setDebugInfo] = useState<FunctionDebug | null>(null);
 
   const isProviderMode = mode === 'provider-targeted';
   const isSinglePlatform = isProviderMode && providerSlug !== 'all';
   const fullDisabled = !isSinglePlatform;
+
+  const persistActiveJob = (jobId: string) => {
+    setActiveJobId(jobId);
+    localStorage.setItem(ACTIVE_JOB_KEY, jobId);
+    localStorage.removeItem(LEGACY_ACTIVE_JOB_KEY);
+  };
+
+  const clearActiveJob = () => {
+    setActiveJobId(null);
+    localStorage.removeItem(ACTIVE_JOB_KEY);
+    localStorage.removeItem(LEGACY_ACTIVE_JOB_KEY);
+  };
+
+  const resultFromJob = (job: SeedJobSummary): ChunkResponse => ({
+    ok: job.status !== 'failed',
+    done: job.status === 'completed',
+    status: job.status === 'completed' ? 'completed' : (job.status === 'failed' ? 'failed' : 'partial'),
+    job_id: job.id,
+    next_cursor: null,
+    plan_total: job.plan_total ?? job.total_pages ?? 0,
+    processed_jobs: job.processed_jobs ?? job.processed_count ?? 0,
+    jobs_done_this_chunk: 0,
+    stats: (job.stats as SeedStats) ?? {
+      discovered: 0, titles_upserted: 0, availability_rows: 0, aliases_added: 0, errors: 0,
+    },
+    sources: job.sources ?? [],
+    coverage_delta: job.coverage_delta ?? null,
+    error: job.last_error ?? null,
+    elapsed_ms: 0,
+  });
+
+  const applyJobSummary = (job: SeedJobSummary, markInterrupted = true) => {
+    persistActiveJob(job.id);
+    const processed = job.processed_jobs ?? job.processed_count ?? 0;
+    const total = job.plan_total ?? job.total_pages ?? 0;
+    setProgress({ chunks: 0, processed, total });
+    setLastResult(resultFromJob(job));
+    setInterrupted(markInterrupted || job.status !== 'completed');
+    setErrorMsg(job.last_error || (job.status === 'running' ? CONNECTION_ERROR_MESSAGE : null));
+  };
+
+  const invokeSeedFunction = async (action: string, body: Record<string, any>) => {
+    const res = await supabase.functions.invoke(SEED_FUNCTION, { body: { ...body, action } });
+    if (res.error) {
+      setDebugInfo({ functionName: SEED_FUNCTION, action, jobId: body.job_id ?? null, errorMessage: res.error.message || String(res.error) });
+      throw res.error;
+    }
+    setDebugInfo(null);
+    return res.data;
+  };
 
   // Restore last interrupted job from localStorage + DB on mount
   useEffect(() => {

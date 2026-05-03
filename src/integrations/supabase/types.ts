@@ -415,6 +415,60 @@ export type Database = {
         }
         Relationships: []
       }
+      provider_derivation_rules: {
+        Row: {
+          availability_type: string
+          confidence: number
+          created_at: string
+          derived_provider_id: string
+          id: string
+          is_active: boolean
+          note: string | null
+          region: string
+          source_provider_id: string
+          updated_at: string
+        }
+        Insert: {
+          availability_type?: string
+          confidence?: number
+          created_at?: string
+          derived_provider_id: string
+          id?: string
+          is_active?: boolean
+          note?: string | null
+          region?: string
+          source_provider_id: string
+          updated_at?: string
+        }
+        Update: {
+          availability_type?: string
+          confidence?: number
+          created_at?: string
+          derived_provider_id?: string
+          id?: string
+          is_active?: boolean
+          note?: string | null
+          region?: string
+          source_provider_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "provider_derivation_rules_derived_provider_id_fkey"
+            columns: ["derived_provider_id"]
+            isOneToOne: false
+            referencedRelation: "streaming_providers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "provider_derivation_rules_source_provider_id_fkey"
+            columns: ["source_provider_id"]
+            isOneToOne: false
+            referencedRelation: "streaming_providers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       search_cache: {
         Row: {
           cache_key: string

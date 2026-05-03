@@ -166,6 +166,34 @@ interface Cursor {
   baseline?: Baseline;
 }
 
+function jobToSummary(jobRow: any) {
+  const params = jobRow?.params || {};
+  const cursor = jobRow?.cursor || null;
+  return {
+    id: jobRow.id,
+    status: jobRow.status,
+    mode: jobRow.mode,
+    selected_provider_slug: Array.isArray(params.providers) && params.providers.length === 1
+      ? params.providers[0]
+      : (typeof params.provider === "string" ? params.provider : null),
+    current_strategy: jobRow.current_strategy,
+    current_media_type: jobRow.current_type,
+    current_page: jobRow.current_page,
+    total_pages: jobRow.plan_total,
+    processed_count: jobRow.processed_jobs,
+    processed_jobs: jobRow.processed_jobs,
+    plan_total: jobRow.plan_total,
+    current_provider: jobRow.current_provider,
+    last_error: jobRow.last_error,
+    updated_at: jobRow.updated_at,
+    last_heartbeat_at: jobRow.last_heartbeat_at,
+    stats: jobRow.stats || {},
+    sources: jobRow.sources || [],
+    coverage_delta: jobRow.coverage_delta || null,
+    has_cursor: !!cursor,
+  };
+}
+
 function buildPlan(
   pagesPrimary: number,
   pagesSecondary: number,

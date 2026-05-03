@@ -95,6 +95,8 @@ interface SeedStats {
   aliases_added: number;
   aliases_skipped_cached: number;
   errors: number;
+  skipped_no_poster: number;
+  skipped_no_tr_availability: number;
   kind_counts: Record<string, number>;
 }
 
@@ -107,13 +109,20 @@ interface SourceStats {
   aliases_skipped_cached: number;
 }
 
-// A single unit of work: one TMDB discover page for one (provider|docs, type).
+// A single unit of work: one TMDB discover page for one (provider|docs, type, strategy).
 interface Job {
-  source: string;             // provider slug or "documentary-genre-99"
+  source: string;             // provider slug or "documentary-genre-99" or "deep:<strategy>:<provider>"
   type: "movie" | "tv";
   page: number;
   tmdb_provider_id?: number;  // present for provider jobs
   with_genres?: number[];     // present for doc jobs
+  strategy?: string;          // popularity | vote_average | vote_count | recent
+  sort_by?: string;
+  vote_average_gte?: number;
+  vote_count_gte?: number;
+  release_date_gte?: string;
+  release_date_lte?: string;
+  with_original_language?: string;
 }
 
 interface Cursor {
@@ -137,17 +146,107 @@ function buildPlan(
     const pages = p.priority === "primary" ? pagesPrimary : pagesSecondary;
     for (const type of ["movie", "tv"] as const) {
       for (let page = 1; page <= pages; page++) {
-        jobs.push({ source: p.slug, type, page, tmdb_provider_id: p.tmdb_id });
+        jobs.push({ source: p.slug, type, page, tmdb_provider_id: p.tmdb_id, strategy: "popularity", sort_by: "popularity.desc" });
       }
     }
   }
   if (pagesDocs > 0 && !providersFilter) {
     for (const type of ["movie", "tv"] as const) {
       for (let page = 1; page <= pagesDocs; page++) {
-        jobs.push({ source: "documentary-genre-99", type, page, with_genres: [99] });
+        jobs.push({ source: "documentary-genre-99", type, page, with_genres: [99], strategy: "popularity", sort_by: "popularity.desc" });
       }
     }
   }
+  return jobs;
+}
+
+// ─── Deep expansion plan ────────────────────────────────────────────────
+// Multi-strategy across primary providers + docs to surface beyond the
+// popularity head. Each (provider, type, strategy) gets N pages.
+interface DeepConfig {
+  pages_per_strategy: number;       // pages each strategy iterates
+  pages_docs_per_strategy: number;
+  vote_count_floor: number;         // generic floor
+  vote_average_floor: number;       // for vote_average.desc strategy
+  strategies: Array<"popularity" | "vote_average" | "vote_count" | "recent">;
+  recent_year_from?: number;        // YYYY for recent strategy
+}
+
+function buildDeepPlan(cfg: DeepConfig, providersFilter: string[] | null): Job[] {
+  const jobs: Job[] = [];
+  const recentGte = cfg.recent_year_from ? `${cfg.recent_year_from}-01-01` : "2022-01-01";
+
+  for (const p of TMDB_PROVIDERS_TR) {
+    if (providersFilter && !providersFilter.includes(p.slug)) continue;
+    // Skip lowest-priority secondaries from deep expansion only if no titles match;
+    // we still include them but with shorter strategy set.
+    const stratList = p.priority === "primary"
+      ? cfg.strategies
+      : (cfg.strategies.includes("popularity") ? ["popularity" as const] : cfg.strategies.slice(0, 1));
+
+    for (const type of ["movie", "tv"] as const) {
+      for (const strat of stratList) {
+        for (let page = 1; page <= cfg.pages_per_strategy; page++) {
+          const job: Job = {
+            source: `${p.slug}:${strat}`,
+            type,
+            page,
+            tmdb_provider_id: p.tmdb_id,
+            strategy: strat,
+          };
+          if (strat === "popularity") {
+            job.sort_by = "popularity.desc";
+            job.vote_count_gte = cfg.vote_count_floor;
+          } else if (strat === "vote_average") {
+            job.sort_by = "vote_average.desc";
+            job.vote_count_gte = Math.max(cfg.vote_count_floor, 50);
+            job.vote_average_gte = cfg.vote_average_floor;
+          } else if (strat === "vote_count") {
+            job.sort_by = "vote_count.desc";
+            job.vote_count_gte = cfg.vote_count_floor;
+          } else if (strat === "recent") {
+            job.sort_by = type === "movie" ? "primary_release_date.desc" : "first_air_date.desc";
+            job.vote_count_gte = Math.max(5, Math.floor(cfg.vote_count_floor / 2));
+            job.release_date_gte = recentGte;
+          }
+          jobs.push(job);
+        }
+      }
+    }
+  }
+
+  if (!providersFilter) {
+    for (const type of ["movie", "tv"] as const) {
+      for (const strat of cfg.strategies) {
+        for (let page = 1; page <= cfg.pages_docs_per_strategy; page++) {
+          const job: Job = {
+            source: `documentary-genre-99:${strat}`,
+            type,
+            page,
+            with_genres: [99],
+            strategy: strat,
+          };
+          if (strat === "popularity") {
+            job.sort_by = "popularity.desc";
+            job.vote_count_gte = cfg.vote_count_floor;
+          } else if (strat === "vote_average") {
+            job.sort_by = "vote_average.desc";
+            job.vote_count_gte = Math.max(cfg.vote_count_floor, 30);
+            job.vote_average_gte = cfg.vote_average_floor;
+          } else if (strat === "vote_count") {
+            job.sort_by = "vote_count.desc";
+            job.vote_count_gte = cfg.vote_count_floor;
+          } else if (strat === "recent") {
+            job.sort_by = type === "movie" ? "primary_release_date.desc" : "first_air_date.desc";
+            job.vote_count_gte = Math.max(5, Math.floor(cfg.vote_count_floor / 2));
+            job.release_date_gte = recentGte;
+          }
+          jobs.push(job);
+        }
+      }
+    }
+  }
+
   return jobs;
 }
 
@@ -176,6 +275,11 @@ async function processOne(
     ]);
     if (!detail) {
       stats.errors++;
+      return;
+    }
+    // Quality guard: poster required
+    if (!detail.poster_path) {
+      stats.skipped_no_poster++;
       return;
     }
 
@@ -290,12 +394,21 @@ async function runJob(
     withWatchProviders: job.tmdb_provider_id ? [job.tmdb_provider_id] : undefined,
     withGenres: job.with_genres,
     watchRegion: "TR",
-    voteCountGte: voteFloor,
-    sortBy: "popularity.desc",
+    voteCountGte: job.vote_count_gte ?? voteFloor,
+    voteAverageGte: job.vote_average_gte,
+    releaseDateGte: job.release_date_gte,
+    releaseDateLte: job.release_date_lte,
+    withOriginalLanguage: job.with_original_language,
+    sortBy: job.sort_by ?? "popularity.desc",
   });
   for (const item of results) {
     stats.discovered++;
     src.discovered++;
+    // Quality guard: require poster up front to skip detail fetch entirely
+    if (!item.poster_path) {
+      stats.skipped_no_poster++;
+      continue;
+    }
     await processOne(sb, item, providers, stats, src);
   }
 }
@@ -365,14 +478,33 @@ serve(async (req: Request) => {
   if (body.cursor && typeof body.cursor === "object" && Array.isArray(body.cursor.jobs)) {
     cursor = body.cursor as Cursor;
     if (!cursor.stats.kind_counts) cursor.stats.kind_counts = {};
+    if (typeof cursor.stats.skipped_no_poster !== "number") cursor.stats.skipped_no_poster = 0;
+    if (typeof cursor.stats.skipped_no_tr_availability !== "number") cursor.stats.skipped_no_tr_availability = 0;
   } else {
-    const pagesPrimary = Math.max(0, Math.min(20, body.pages_primary ?? DEFAULT_PAGES_PRIMARY));
-    const pagesSecondary = Math.max(0, Math.min(20, body.pages_secondary ?? DEFAULT_PAGES_SECONDARY));
-    const pagesDocs = Math.max(0, Math.min(20, body.pages_docs ?? DEFAULT_DOC_PAGES));
     const voteFloor = Math.max(0, body.vote_floor ?? DEFAULT_VOTE_FLOOR);
     const providersFilter: string[] | null = Array.isArray(body.providers) && body.providers.length > 0
       ? body.providers : null;
-    const jobs = buildPlan(pagesPrimary, pagesSecondary, pagesDocs, providersFilter);
+
+    let jobs: Job[];
+    if (body.mode === "deep") {
+      const cfg: DeepConfig = {
+        pages_per_strategy: Math.max(1, Math.min(20, body.pages_per_strategy ?? 5)),
+        pages_docs_per_strategy: Math.max(0, Math.min(20, body.pages_docs_per_strategy ?? 3)),
+        vote_count_floor: Math.max(0, body.vote_count_floor ?? 15),
+        vote_average_floor: Math.max(0, body.vote_average_floor ?? 7.0),
+        strategies: Array.isArray(body.strategies) && body.strategies.length > 0
+          ? body.strategies
+          : ["popularity", "vote_count", "vote_average", "recent"],
+        recent_year_from: body.recent_year_from ?? 2022,
+      };
+      jobs = buildDeepPlan(cfg, providersFilter);
+    } else {
+      const pagesPrimary = Math.max(0, Math.min(20, body.pages_primary ?? DEFAULT_PAGES_PRIMARY));
+      const pagesSecondary = Math.max(0, Math.min(20, body.pages_secondary ?? DEFAULT_PAGES_SECONDARY));
+      const pagesDocs = Math.max(0, Math.min(20, body.pages_docs ?? DEFAULT_DOC_PAGES));
+      jobs = buildPlan(pagesPrimary, pagesSecondary, pagesDocs, providersFilter);
+    }
+
     cursor = {
       v: 1,
       jobs,
@@ -381,6 +513,7 @@ serve(async (req: Request) => {
       stats: {
         discovered: 0, titles_upserted: 0, availability_rows: 0,
         aliases_added: 0, aliases_skipped_cached: 0, errors: 0,
+        skipped_no_poster: 0, skipped_no_tr_availability: 0,
         kind_counts: {},
       },
       sources: {},

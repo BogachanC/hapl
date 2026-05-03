@@ -11,6 +11,8 @@ interface SeedStats {
   aliases_added: number;
   aliases_skipped_cached?: number;
   errors: number;
+  skipped_no_poster?: number;
+  skipped_no_tr_availability?: number;
   kind_counts?: Record<string, number>;
 }
 
@@ -35,12 +37,14 @@ interface ChunkResponse {
   elapsed_ms: number;
 }
 
-const MAX_CHUNKS = 80; // safety cap
+const MAX_CHUNKS = 200; // safety cap (deep mode may need many chunks)
+
+type SeedMode = 'small' | 'large' | 'wide' | 'deep';
 
 export function CatalogSeedPanel() {
   const [running, setRunning] = useState(false);
   const [lastResult, setLastResult] = useState<ChunkResponse | null>(null);
-  const [mode, setMode] = useState<'small' | 'large' | 'wide'>('small');
+  const [mode, setMode] = useState<SeedMode>('small');
   const [progress, setProgress] = useState<{ chunks: number; processed: number; total: number } | null>(null);
   const [totalElapsedMs, setTotalElapsedMs] = useState(0);
 
@@ -55,14 +59,26 @@ export function CatalogSeedPanel() {
         ? { pages_primary: 1, pages_secondary: 1, pages_docs: 1, vote_floor: 20 }
         : mode === 'large'
         ? { pages_primary: 3, pages_secondary: 2, pages_docs: 2, vote_floor: 20 }
-        : { pages_primary: 8, pages_secondary: 5, pages_docs: 4, vote_floor: 15 };
+        : mode === 'wide'
+        ? { pages_primary: 8, pages_secondary: 5, pages_docs: 4, vote_floor: 15 }
+        : {
+            mode: 'deep',
+            pages_per_strategy: 5,
+            pages_docs_per_strategy: 3,
+            vote_count_floor: 15,
+            vote_average_floor: 7.0,
+            strategies: ['popularity', 'vote_count', 'vote_average', 'recent'],
+            recent_year_from: 2022,
+          };
 
     toast.info(
       mode === 'small'
         ? 'Küçük seed başlatıldı (~300 içerik). Lütfen 1-2 dakika bekleyin…'
         : mode === 'large'
         ? 'Büyük seed başlatıldı (~1000 içerik). Birden fazla chunk halinde çalışacak…'
-        : 'Geniş seed başlatıldı (~3000 hedef). Çok sayıda chunk halinde çalışacak, sayfada kalın…'
+        : mode === 'wide'
+        ? 'Geniş seed başlatıldı (~3000 hedef). Çok sayıda chunk halinde çalışacak, sayfada kalın…'
+        : 'Derin TMDB Expansion başlatıldı (~5000+ hedef). Çoklu strateji, uzun sürebilir, sayfada kalın…'
     );
 
     try {
@@ -142,6 +158,14 @@ export function CatalogSeedPanel() {
         >
           Geniş (~3000)
         </Button>
+        <Button
+          variant={mode === 'deep' ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => setMode('deep')}
+          disabled={running}
+        >
+          Derin (~5000+)
+        </Button>
       </div>
 
       <Button onClick={runSeed} disabled={running} className="w-full gap-2">
@@ -178,6 +202,7 @@ export function CatalogSeedPanel() {
             <div>Alias eklenen:</div>      <div className="text-foreground font-medium">{lastResult.stats.aliases_added}</div>
             <div>Alias cache hit:</div>    <div className="text-foreground font-medium">{lastResult.stats.aliases_skipped_cached ?? 0}</div>
             <div>Hata:</div>               <div className="text-foreground font-medium">{lastResult.stats.errors}</div>
+            <div>Postersiz atlanan:</div>  <div className="text-foreground font-medium">{lastResult.stats.skipped_no_poster ?? 0}</div>
             <div>Toplam süre:</div>        <div className="text-foreground font-medium">{(totalElapsedMs / 1000).toFixed(1)}s</div>
           </div>
           {lastResult.sources?.length > 0 && (

@@ -234,9 +234,17 @@ export function CatalogSeedPanel() {
         }
       } catch (e: any) {
         const msg = e?.message || 'Hazırlık aşamasında hata';
-        setErrorMsg(msg);
+        setErrorMsg(CONNECTION_ERROR_MESSAGE);
+        try {
+          const job = await findLatestIncomplete();
+          if (job && job.status !== 'completed') {
+            applyJobSummary(job);
+          }
+        } catch {
+          setDebugInfo({ functionName: SEED_FUNCTION, action: 'start', jobId: null, errorMessage: msg });
+        }
         setRunning(false);
-        toast.error('Keşif başlatılamadı: ' + msg);
+        toast.warning(CONNECTION_ERROR_MESSAGE);
         return;
       }
       body = currentJobId ? { action: 'continue', job_id: currentJobId } : initialBody;

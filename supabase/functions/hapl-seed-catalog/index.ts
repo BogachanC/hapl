@@ -813,6 +813,127 @@ serve(async (req: Request) => {
     }
   }
 
+  if (action === "verify_providers_batch") {
+    // Read-only stale audit. Pulls a sample of titles currently marked
+    // "available" on a given provider (or across all mainstream providers)
+    // and compares each one against live TMDB /watch/providers TR. Reports
+    // mismatches as `only_in_db` candidates. NEVER writes; user reviews
+    // first and decides whether to clean up.
+    //
+    // Request body:
+    //   { action: "verify_providers_batch",
+    //     provider_slug?: string,           // limit to one provider
+    //     only_mainstream?: boolean,        // when true and no slug:
+    //                                       // [netflix, max, disney-plus,
+    //                                       //  amazon-prime-video, tv-plus]
+    //     limit?: number }                  // sample size, default 30, max 100
+    const limit = Math.min(Number(body.limit) || 30, 100);
+    const providerSlug: string | null =
+      typeof body.provider_slug === "string" && body.provider_slug.trim()
+        ? body.provider_slug.trim()
+        : null;
+    const onlyMainstream = !!body.only_mainstream;
+    const MAINSTREAM = ["netflix", "max", "disney-plus", "amazon-prime-video", "tv-plus"];
+
+    try {
+      // Resolve provider rows we care about
+      let providersQuery = sb
+        .from("streaming_providers")
+        .select("id, slug, display_name, tmdb_names")
+        .eq("is_active", true);
+      if (providerSlug) {
+        providersQuery = providersQuery.eq("slug", providerSlug);
+      } else if (onlyMainstream) {
+        providersQuery = providersQuery.in("slug", MAINSTREAM);
+      }
+      const { data: providerRows, error: provErr } = await providersQuery;
+      if (provErr) throw provErr;
+      if (!providerRows || providerRows.length === 0) {
+        return new Response(JSON.stringify({ ok: false, error: "no providers matched" }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const perProviderReports: any[] = [];
+      let totalChecked = 0;
+      let totalStale = 0;
+
+      for (const prov of providerRows) {
+        // Sample candidate availability rows for this provider
+        const { data: candidates, error: candErr } = await sb
+          .from("content_availability")
+          .select("title_id, raw_payload, source, availability_type, content_titles!inner(id, tmdb_id, tmdb_type, title, release_year)")
+          .eq("provider_id", prov.id)
+          .eq("region", "TR")
+          .eq("status", "available")
+          // Skip provider_rule-derived rows: those mirror their source row
+          // (max ↔ tv-plus). Verifying them only re-validates the source.
+          .neq("source", "provider_rule")
+          .limit(limit);
+        if (candErr) {
+          perProviderReports.push({
+            provider_slug: prov.slug, error: candErr.message, checked: 0, stale: [],
+          });
+          continue;
+        }
+        const stale: any[] = [];
+        let checked = 0;
+        for (const row of candidates || []) {
+          const ct = (row as any).content_titles;
+          if (!ct?.tmdb_id || !ct?.tmdb_type) continue;
+          checked++;
+          try {
+            const watch = await tmdbWatchProvidersTR(ct.tmdb_type, ct.tmdb_id);
+            const liveIds = new Set<number>();
+            for (const list of [watch.flatrate, watch.free, watch.ads, watch.rent, watch.buy]) {
+              for (const p of list || []) liveIds.add(p.provider_id);
+            }
+            const dbTmdbId = (row as any).raw_payload?.provider_id ?? null;
+            // Stale signal: DB says provider X is available but live TMDB
+            // doesn't list X for this title in TR.
+            if (dbTmdbId && !liveIds.has(dbTmdbId)) {
+              stale.push({
+                title_id: ct.id,
+                tmdb_id: ct.tmdb_id,
+                tmdb_type: ct.tmdb_type,
+                title: ct.title,
+                year: ct.release_year,
+                source: (row as any).source,
+                db_tmdb_provider_id: dbTmdbId,
+                live_provider_ids: [...liveIds],
+              });
+            }
+          } catch (_e) {
+            // Skip transient TMDB errors silently; this is a sampling audit.
+          }
+          // Be polite to TMDB
+          await new Promise((r) => setTimeout(r, 60));
+        }
+        totalChecked += checked;
+        totalStale += stale.length;
+        perProviderReports.push({
+          provider_slug: prov.slug,
+          provider_name: prov.display_name,
+          checked,
+          stale_count: stale.length,
+          stale,
+        });
+      }
+
+      return new Response(JSON.stringify({
+        ok: true,
+        params: { provider_slug: providerSlug, only_mainstream: onlyMainstream, limit },
+        totals: { providers: providerRows.length, checked: totalChecked, stale: totalStale },
+        reports: perProviderReports,
+        note: "Read-only audit. No DB writes. Review stale entries and run targeted cleanup separately.",
+      }, null, 2), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    } catch (e: any) {
+      return new Response(JSON.stringify({ ok: false, error: e?.message || "batch verify failed" }), {
+        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+  }
+
   const providers = await loadProviders(sb);
   if (providers.length === 0) {
     return new Response(JSON.stringify({ ok: false, error: "no providers configured" }), {

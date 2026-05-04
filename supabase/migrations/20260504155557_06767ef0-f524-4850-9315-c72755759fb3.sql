@@ -1,0 +1,1 @@
+DELETE FROM public.search_cache WHERE cache_key IN ('hapl:money heist','hapl:la casa de papel','hapl:srek','hapl:friends','hapl:dark','hapl:behzat','hapl:stranger things','hapl:game of thrones','hapl:the office');

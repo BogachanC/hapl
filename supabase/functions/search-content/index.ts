@@ -552,13 +552,21 @@ serve(async (req) => {
     //   • keeps exact normalized title match as the tie-breaker for queries
     //     like "Dark", "Friends", "Behzat".
     const qNormFinal = normalizeTitle(query);
-    const rankedById = new Map<string, number>();
-    for (const r of ranked) rankedById.set(`${r.media_type}:${r.id}`, r.score);
+    const aliasGroup = getAliasGroupMembers(query);
+    const rankedById = new Map<string, { score: number; original: string }>();
+    for (const r of ranked) {
+      rankedById.set(`${r.media_type}:${r.id}`, {
+        score: r.score,
+        original: r.original_title || "",
+      });
+    }
 
     const scored = results.map((r) => {
-      const baseRel = rankedById.get(`${r.type}:${r.id}`) ?? 0.5;
+      const meta = rankedById.get(`${r.type}:${r.id}`);
+      const baseRel = meta?.score ?? 0.5;
       const titleNorm = normalizeTitle(r.title);
-      const isExact = titleNorm === qNormFinal;
+      const origNorm = normalizeTitle(meta?.original || "");
+      const isExact = titleNorm === qNormFinal || origNorm === qNormFinal;
       const hasProvider = r.platforms.length > 0;
       // Watchable boost: 0.30 — large but not enough to flip an unrelated title.
       const watchBoost = hasProvider ? 0.30 : 0;
@@ -570,8 +578,24 @@ serve(async (req) => {
       const exactNudge = isExact ? 0.10 : 0;
       // Confidence (0..100) acts as a soft secondary signal.
       const confSignal = (r.confidence ?? 0) / 1000; // up to 0.10
-      const finalScore = baseRel + watchBoost + exactNudge + confSignal - noProviderPenalty;
-      return { r, finalScore, baseRel, hasProvider, isExact };
+      // Alias-group canonical boost: when the user searched a known alias
+      // (e.g. "Money Heist") and a candidate's title/original_title is itself
+      // a member of the same alias group (e.g. "La Casa de Papel"), it is the
+      // canonical work. TV gets a stronger boost than movie because alias
+      // groups in this project map to canonical TV series; same-token movie
+      // siblings ("Darphane Soygunu" / "Coin Heist") must NOT outrank them.
+      let aliasGroupBoost = 0;
+      if (aliasGroup) {
+        const candIsGroupMember =
+          (titleNorm && aliasGroup.has(titleNorm)) ||
+          (origNorm && aliasGroup.has(origNorm));
+        if (candIsGroupMember) {
+          aliasGroupBoost = r.type === "tv" ? 0.55 : 0.20;
+        }
+      }
+      const finalScore =
+        baseRel + watchBoost + exactNudge + confSignal + aliasGroupBoost - noProviderPenalty;
+      return { r, finalScore, baseRel, hasProvider, isExact, aliasGroupBoost };
     });
 
     scored.sort((a, b) => b.finalScore - a.finalScore);

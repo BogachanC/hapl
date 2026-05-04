@@ -56,6 +56,23 @@ const INDEX: Map<string, string[]> = (() => {
   return m;
 })();
 
+// Normalized → full set of normalized members of the same group (incl. self).
+// Used by search ranking to detect when a candidate's title belongs to the
+// same alias/franchise group the user actually queried.
+const GROUP_MEMBERS: Map<string, Set<string>> = (() => {
+  const m = new Map<string, Set<string>>();
+  for (const group of ALIAS_GROUPS) {
+    const normSet = new Set<string>();
+    for (const member of group) {
+      const k = normalizeTitle(member);
+      if (k) normSet.add(k);
+    }
+    if (normSet.size === 0) continue;
+    for (const k of normSet) m.set(k, normSet);
+  }
+  return m;
+})();
+
 /**
  * Return alternate titles for a query, or [] if none known.
  * Matching is normalized (case/diacritic-insensitive).
@@ -63,4 +80,19 @@ const INDEX: Map<string, string[]> = (() => {
 export function getAliases(query: string): string[] {
   const key = normalizeTitle(query);
   return INDEX.get(key) || [];
+}
+
+/**
+ * If `query` belongs to a known alias/franchise group, return the set of
+ * ALL normalized member titles of that group (including the query itself).
+ * Otherwise null.
+ *
+ * Lets the search ranker recognise when a candidate result is the canonical
+ * group member (e.g. "La Casa de Papel") versus a same-name-but-unrelated
+ * sibling (e.g. "Coin Heist" / "Darphane Soygunu") that only got pulled in
+ * via token overlap on the alias variant query.
+ */
+export function getAliasGroupMembers(query: string): Set<string> | null {
+  const key = normalizeTitle(query);
+  return GROUP_MEMBERS.get(key) || null;
 }

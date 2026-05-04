@@ -10,7 +10,7 @@ import {
   tmdbImage,
 } from "../_shared/tmdb.ts";
 import { firecrawlSearchText } from "../_shared/firecrawl.ts";
-import { getAliases } from "../_shared/aliases.ts";
+import { getAliases, getAliasGroupMembers } from "../_shared/aliases.ts";
 import {
   getAliasExpansions,
   needsHydration,

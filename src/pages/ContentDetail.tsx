@@ -144,13 +144,8 @@ const ContentDetail = () => {
           </div>
         </div>
 
-        {/* Description */}
-        {content.description && (
-          <div className="space-y-2 bg-card/50 rounded-2xl p-4 border border-border/30">
-            <h3 className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Açıklama</h3>
-            <p className="text-sm text-foreground/85 leading-relaxed">{content.description}</p>
-          </div>
-        )}
+        {/* Description intentionally hidden — Hapl shows minimum metadata only.
+            See /about for the data-display policy. */}
 
         {/* Genres */}
         {content.genre && content.genre.length > 0 && (

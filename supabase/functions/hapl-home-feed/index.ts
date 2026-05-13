@@ -67,6 +67,7 @@ interface FeedItem {
   platforms: Array<{ id: string; slug: string; name: string; logo_url: string | null; color: string; availability_type: string; confidence: number }>;
   available_in_tr: boolean;
   confidence: number;
+  origin?: "yerli" | "yabanci" | "bilinmiyor";
   _score: number;
 }
 
@@ -271,6 +272,21 @@ serve(async (req: Request) => {
       if (displayPlatforms.length === 0) continue;
       const maxConf = Math.max(...displayPlatforms.map((p) => p.confidence));
 
+      // Derive origin from cached metadata.
+      const countries = new Set<string>();
+      for (const c of (meta?.production_countries || [])) {
+        const code = (typeof c === "string" ? c : c?.iso_3166_1) || "";
+        if (code) countries.add(String(code).toUpperCase());
+      }
+      for (const c of (meta?.origin_country || [])) countries.add(String(c).toUpperCase());
+      const origLang = String(meta?.original_language || "").toLowerCase();
+      const origin: "yerli" | "yabanci" | "bilinmiyor" =
+        countries.has("TR") || origLang === "tr"
+          ? "yerli"
+          : (countries.size > 0 || origLang)
+            ? "yabanci"
+            : "bilinmiyor";
+
       items.push({
         id: t.id,
         tmdb_id: t.tmdb_id,
@@ -287,6 +303,7 @@ serve(async (req: Request) => {
         platforms: displayPlatforms,
         available_in_tr: true,
         confidence: maxConf,
+        origin,
         _score: score,
       });
     }

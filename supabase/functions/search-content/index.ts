@@ -386,6 +386,21 @@ async function enrichCandidate(
     : (usedFirecrawl ? 0.40 : 0);
   const confidence = Math.round(Math.min(1, base + cand.score * 0.10) * 100);
 
+  // Derive origin from TMDB metadata (yerli / yabancı / bilinmiyor).
+  const countries = new Set<string>();
+  for (const c of (detail.production_countries || [])) {
+    const code = (typeof c === "string" ? c : c?.iso_3166_1) || "";
+    if (code) countries.add(String(code).toUpperCase());
+  }
+  for (const c of (detail.origin_country || [])) countries.add(String(c).toUpperCase());
+  const origLang = (detail.original_language || "").toLowerCase();
+  const origin: "yerli" | "yabanci" | "bilinmiyor" =
+    countries.has("TR") || origLang === "tr"
+      ? "yerli"
+      : (countries.size > 0 || origLang)
+        ? "yabanci"
+        : "bilinmiyor";
+
   return {
     id: cand.id,
     type: cand.media_type,
@@ -401,6 +416,7 @@ async function enrichCandidate(
     tmdb_url: `https://www.themoviedb.org/${cand.media_type}/${cand.id}`,
     available_in_tr: platforms.length > 0,
     confidence,
+    origin,
   };
 }
 

@@ -132,11 +132,23 @@ function SearchResultCard({ item, index }: { item: ContentResult; index: number 
 
         <h3 className="font-heading font-bold text-xs text-foreground truncate leading-tight">{item.title}</h3>
 
-        {/* Type + Year row */}
+        {/* Type + Origin + Year row */}
         <div className="flex items-center justify-between gap-1">
-          <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider bg-muted-foreground/20 text-muted-foreground">
-            {typeLabel}
-          </span>
+          <div className="flex items-center gap-1">
+            <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider bg-muted-foreground/20 text-muted-foreground">
+              {typeLabel}
+            </span>
+            {item.origin && item.origin !== 'bilinmiyor' && (
+              <span className={cn(
+                'px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider',
+                item.origin === 'yerli'
+                  ? 'bg-primary/20 text-primary'
+                  : 'bg-secondary/60 text-secondary-foreground'
+              )}>
+                {item.origin === 'yerli' ? 'Yerli' : 'Yabancı'}
+              </span>
+            )}
+          </div>
           {item.year && (
             <span className="text-[9px] text-muted-foreground flex items-center gap-0.5 font-medium">
               <Calendar className="h-2.5 w-2.5" />

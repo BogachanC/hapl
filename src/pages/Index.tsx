@@ -7,7 +7,7 @@ import { SearchBar } from '@/components/SearchBar';
 import { SearchResults } from '@/components/SearchResults';
 import { PlatformFilter, type PlatformFilterItem } from '@/components/PlatformFilter';
 import { TypeFilter } from '@/components/TypeFilter';
-import { Tv, Loader2, Plus, ArrowLeft } from 'lucide-react';
+import { Tv, Loader2, Plus, ArrowLeft, Info } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 // Map legacy TypeFilter values → home-feed category
@@ -110,12 +110,21 @@ const Index = () => {
               </span>
             </div>
 
-            <Link
-              to="/admin"
-              className="ml-auto h-9 w-9 rounded-xl bg-secondary/80 hover:bg-primary/20 border border-border/30 hover:border-primary/40 flex items-center justify-center transition-all duration-200 hover:scale-105 active:scale-95"
-            >
-              <Plus className="h-4 w-4 text-muted-foreground" />
-            </Link>
+            <div className="ml-auto flex items-center gap-2">
+              <Link
+                to="/about"
+                className="h-9 w-9 rounded-xl bg-secondary/80 hover:bg-primary/20 border border-border/30 hover:border-primary/40 flex items-center justify-center transition-all duration-200 hover:scale-105 active:scale-95"
+                aria-label="Hakkında"
+              >
+                <Info className="h-4 w-4 text-muted-foreground" />
+              </Link>
+              <Link
+                to="/admin"
+                className="h-9 w-9 rounded-xl bg-secondary/80 hover:bg-primary/20 border border-border/30 hover:border-primary/40 flex items-center justify-center transition-all duration-200 hover:scale-105 active:scale-95"
+              >
+                <Plus className="h-4 w-4 text-muted-foreground" />
+              </Link>
+            </div>
           </div>
         </div>
       </header>

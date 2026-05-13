@@ -234,9 +234,7 @@ const AdminPanel = () => {
               </div>
             </div>
 
-            {selectedResult.overview && (
-              <p className="text-xs text-muted-foreground leading-relaxed">{selectedResult.overview}</p>
-            )}
+            {/* Overview hidden in UI per data-display policy (kept in DB for reference only). */}
 
             {/* Origin & Status */}
             <div className="space-y-2">

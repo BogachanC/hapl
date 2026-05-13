@@ -67,6 +67,7 @@ interface FeedItem {
   platforms: Array<{ id: string; slug: string; name: string; logo_url: string | null; color: string; availability_type: string; confidence: number }>;
   available_in_tr: boolean;
   confidence: number;
+  origin?: "yerli" | "yabanci" | "bilinmiyor";
   _score: number;
 }
 

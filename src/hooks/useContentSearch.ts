@@ -26,6 +26,7 @@ export interface ContentResult {
   tmdb_url: string;
   available_in_tr: boolean;
   confidence: number;
+  origin?: "yerli" | "yabanci" | "bilinmiyor";
 }
 
 interface SearchState {

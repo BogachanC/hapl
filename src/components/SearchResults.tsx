@@ -1,8 +1,9 @@
-import { ContentResult } from '@/hooks/useContentSearch';
-import { Film, Tv, Calendar, Star } from 'lucide-react';
 import { useState } from 'react';
+import { ContentResult } from '@/hooks/useContentSearch';
+import { Film, Tv, Calendar, Star, ExternalLink, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getPlatformStyle } from '@/lib/platform-colors';
+import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 
 // Legacy fallback: search-content sometimes returns only `name` for older
 // providers. Map well-known display names → slug so styling still works.
@@ -38,11 +39,18 @@ function resolvePlatformSlug(p: { slug?: string; name: string }): string {
   return PLATFORM_NAME_TO_SLUG[p.name] || p.name.toLowerCase().replace(/\s+/g, '-');
 }
 
+function typeLabelFor(item: ContentResult): string {
+  // content_kind isn't on ContentResult; fall back to tv/movie.
+  return item.type === 'tv' ? 'Dizi' : 'Film';
+}
+
 interface SearchResultsProps {
   results: ContentResult[];
 }
 
 export function SearchResults({ results }: SearchResultsProps) {
+  const [selected, setSelected] = useState<ContentResult | null>(null);
+
   // Filter: only show content available in Turkey
   const filtered = results.filter((item) => item.available_in_tr && item.platforms.length > 0);
 
@@ -62,24 +70,40 @@ export function SearchResults({ results }: SearchResultsProps) {
       </p>
       <div className="grid grid-cols-3 gap-2.5 pb-4">
         {filtered.map((item, i) => (
-          <SearchResultCard key={`${item.type}-${item.id}`} item={item} index={i} />
+          <SearchResultCard
+            key={`${item.type}-${item.id}`}
+            item={item}
+            index={i}
+            onSelect={() => setSelected(item)}
+          />
         ))}
       </div>
+
+      <ContentDetailSheet
+        item={selected}
+        onOpenChange={(open) => !open && setSelected(null)}
+      />
     </div>
   );
 }
 
-function SearchResultCard({ item, index }: { item: ContentResult; index: number }) {
+function SearchResultCard({
+  item,
+  index,
+  onSelect,
+}: {
+  item: ContentResult;
+  index: number;
+  onSelect: () => void;
+}) {
   const [imgError, setImgError] = useState(false);
-
-  const typeLabel = item.type === 'tv' ? 'Dizi' : 'Film';
+  const typeLabel = typeLabelFor(item);
 
   return (
-    <a
-      href={item.tmdb_url}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="bg-card rounded-xl overflow-hidden border border-border/30 hover:border-primary/40 hover:shadow-[0_8px_30px_-8px_hsl(var(--primary)/0.25)] transition-all duration-300 animate-fade-in group block"
+    <button
+      type="button"
+      onClick={onSelect}
+      className="text-left bg-card rounded-xl overflow-hidden border border-border/30 hover:border-primary/40 hover:shadow-[0_8px_30px_-8px_hsl(var(--primary)/0.25)] transition-all duration-300 animate-fade-in group block w-full"
       style={{ animationDelay: `${index * 40}ms` }}
     >
       {/* Poster */}
@@ -157,6 +181,150 @@ function SearchResultCard({ item, index }: { item: ContentResult; index: number 
           )}
         </div>
       </div>
-    </a>
+    </button>
+  );
+}
+
+function ContentDetailSheet({
+  item,
+  onOpenChange,
+}: {
+  item: ContentResult | null;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const open = !!item;
+  const typeLabel = item ? typeLabelFor(item) : '';
+  const sources = item
+    ? Array.from(new Set(item.platforms.map((p: any) => p.source).filter(Boolean)))
+    : [];
+
+  const feedbackHref = item
+    ? `mailto:hello@hapl.app?subject=${encodeURIComponent(`Hapl veri bildirimi: ${item.title}${item.year ? ` (${item.year})` : ''}`)}`
+    : '#';
+
+  return (
+    <Drawer open={open} onOpenChange={onOpenChange}>
+      <DrawerContent className="bg-background border-border/40">
+        <div className="mx-auto w-full max-w-lg px-5 pb-6">
+          <DrawerHeader className="px-0 pt-2 pb-3">
+            <div className="flex items-start justify-between gap-3">
+              <DrawerTitle className="font-heading text-lg leading-tight text-left">
+                {item?.title}
+              </DrawerTitle>
+              <button
+                type="button"
+                onClick={() => onOpenChange(false)}
+                className="shrink-0 p-1.5 rounded-full bg-secondary/60 hover:bg-secondary"
+                aria-label="Kapat"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </DrawerHeader>
+
+          {item && (
+            <div className="space-y-4">
+              {/* Meta row */}
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="px-2 py-0.5 rounded bg-muted-foreground/20 text-muted-foreground font-semibold uppercase tracking-wider">
+                  {typeLabel}
+                </span>
+                {item.origin && item.origin !== 'bilinmiyor' && (
+                  <span className={cn(
+                    'px-2 py-0.5 rounded font-semibold uppercase tracking-wider',
+                    item.origin === 'yerli'
+                      ? 'bg-primary/20 text-primary'
+                      : 'bg-secondary/60 text-secondary-foreground'
+                  )}>
+                    {item.origin === 'yerli' ? 'Yerli' : 'Yabancı'}
+                  </span>
+                )}
+                {item.origin === 'bilinmiyor' && (
+                  <span className="px-2 py-0.5 rounded font-semibold uppercase tracking-wider bg-secondary/40 text-muted-foreground">
+                    Bilinmiyor
+                  </span>
+                )}
+                {item.year && (
+                  <span className="flex items-center gap-1 text-muted-foreground font-medium">
+                    <Calendar className="h-3 w-3" />
+                    {item.year}
+                  </span>
+                )}
+              </div>
+
+              {/* Genres */}
+              {item.genres && item.genres.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {item.genres.slice(0, 6).map((g) => (
+                    <span
+                      key={g}
+                      className="px-2.5 py-1 bg-secondary/70 rounded-lg text-[11px] font-semibold text-secondary-foreground border border-border/20"
+                    >
+                      {g}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {/* Platforms */}
+              <div className="space-y-2">
+                <h3 className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
+                  Platformlar
+                </h3>
+                <div className="flex flex-wrap gap-2">
+                  {item.platforms.map((p, i) => {
+                    const slug = resolvePlatformSlug(p as any);
+                    const style = getPlatformStyle(slug);
+                    return (
+                      <div
+                        key={i}
+                        className={cn(
+                          'px-3.5 py-1.5 rounded-xl text-xs font-extrabold tracking-wide uppercase shadow-md',
+                          style.bg, style.text
+                        )}
+                      >
+                        {p.name}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Sources */}
+              {sources.length > 0 && (
+                <div className="bg-card/60 border border-border/40 rounded-xl p-3 space-y-1">
+                  <h3 className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                    Kaynak
+                  </h3>
+                  <p className="text-xs text-foreground/80">
+                    {sources.map((s) => (s === 'tmdb' ? 'TMDB' : s === 'firecrawl' ? 'provider_catalog' : String(s))).join(' · ')}
+                  </p>
+                </div>
+              )}
+
+              {/* Feedback */}
+              <a
+                href={feedbackHref}
+                className="block w-full text-center px-4 py-2.5 rounded-xl bg-secondary/80 hover:bg-secondary text-foreground text-sm font-semibold transition-colors"
+              >
+                Bu bilgi hatalı mı? Bildir
+              </a>
+
+              {/* Secondary TMDB attribution link — not the primary CTA */}
+              {item.tmdb_url && (
+                <a
+                  href={item.tmdb_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-[11px] text-muted-foreground/70 hover:text-muted-foreground"
+                >
+                  Kaynak: TMDB <ExternalLink className="h-3 w-3" />
+                </a>
+              )}
+            </div>
+          )}
+        </div>
+      </DrawerContent>
+    </Drawer>
   );
 }

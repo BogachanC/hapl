@@ -308,7 +308,7 @@ const AdminPanel = () => {
                     <p className="text-[11px] text-muted-foreground truncate">{r.original_title}</p>
                   )}
                   {r.release_year && <p className="text-[11px] text-muted-foreground">{r.release_year}</p>}
-                  {r.overview && <p className="text-[11px] text-muted-foreground line-clamp-2 mt-1">{r.overview}</p>}
+                  
                 </div>
                 {loadingDetail && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground shrink-0 self-center" />}
               </button>

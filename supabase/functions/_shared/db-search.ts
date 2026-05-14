@@ -8,7 +8,7 @@
 // Strong-result rule: if the top hit has score >= 0.85 AND at least 3
 // providered results exist, the caller skips TMDB / Firecrawl entirely.
 
-import { normalizeTitle } from "./normalize.ts";
+import { normalizeTitle, meaningfulTokens } from "./normalize.ts";
 import { getAliasGroupMembers } from "./aliases.ts";
 import { tmdbImage } from "./tmdb.ts";
 

@@ -51,6 +51,11 @@ export interface DbSearchOptions {
   requireAvailable?: boolean;
   /** Hard cap. */
   limit?: number;
+  /**
+   * "typeahead" → last meaningful token treated as prefix (user still typing).
+   * "full"      → strict whole-token matching (default).
+   */
+  mode?: "typeahead" | "full";
 }
 
 export interface DbSearchResult {

@@ -530,6 +530,22 @@ serve(async (req) => {
       return { results: [] as DbContentResultOut[], topScore: 0 };
     });
 
+    // Typeahead mode: never call TMDB/Firecrawl. Latency-sensitive UX,
+    // and the user is still typing — DB-only result is the right tradeoff.
+    if (mode === "typeahead") {
+      const out: ContentResultOut[] = dbHit.results.map(({ _score, ...r }) => r);
+      console.log(
+        `[hapl] typeahead DB-only: query="${trimmedQuery}" topScore=${dbHit.topScore.toFixed(2)} count=${out.length}`,
+      );
+      if (out.length > 0) {
+        writeToCache(sb, key, out).catch((e) => console.error("cache write:", e));
+      }
+      writeTelemetry(out, "db");
+      return new Response(JSON.stringify({ results: out, cached: false, source: "db", mode }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const STRONG_DB = dbHit.topScore >= 0.85 && dbHit.results.length >= 3;
     if (STRONG_DB) {
       // Strip internal _score before returning, keep ContentResultOut shape.
@@ -541,7 +557,7 @@ serve(async (req) => {
       // Cache (only if any TR-available result, which by construction is true here)
       writeToCache(sb, key, out).catch((e) => console.error("cache write:", e));
       writeTelemetry(out, "db");
-      return new Response(JSON.stringify({ results: out, cached: false, source: "db" }), {
+      return new Response(JSON.stringify({ results: out, cached: false, source: "db", mode }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }

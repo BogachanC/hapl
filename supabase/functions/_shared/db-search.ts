@@ -339,19 +339,28 @@ export async function searchTitlesInDb(
 
     const titleNorm = normalizeTitle(t.title || "");
     const origNorm = normalizeTitle(t.original_title || "");
-    if (aliasGroup) {
-      const isCanonical =
-        (titleNorm && aliasGroup.has(titleNorm)) || (origNorm && aliasGroup.has(origNorm));
-      if (isCanonical) score += t.tmdb_type === "tv" ? 0.20 : 0.08;
+    const isCanonical = !!aliasGroup && (
+      (titleNorm && aliasGroup.has(titleNorm)) || (origNorm && aliasGroup.has(origNorm))
+    );
+
+    // Boost gating: weak base (trgm with poor coverage) should NOT be lifted
+    // into "strong DB hit" territory by provider/popularity boosts.
+    const baseStrong = score >= 0.5;
+    if (isCanonical) score += t.tmdb_type === "tv" ? 0.20 : 0.08;
+    if (baseStrong) {
+      score += Math.min(0.10, platforms.length * 0.04);
+      if (t.poster_path) score += 0.03;
+      const metaPre = t.metadata || {};
+      const vc = Number(metaPre.vote_count) || 0;
+      if (vc >= 500) score += 0.04;
+      else if (vc >= 100) score += 0.02;
     }
-    score += Math.min(0.10, platforms.length * 0.04);
-    if (t.poster_path) score += 0.03;
-    const meta = t.metadata || {};
-    const voteCount = Number(meta.vote_count) || 0;
-    if (voteCount >= 500) score += 0.04;
-    else if (voteCount >= 100) score += 0.02;
+    // Hard cap for trgm: even with boosts, never exceed 0.84 unless canonical.
+    if (cand.kind === "trgm" && !isCanonical) score = Math.min(score, 0.84);
 
     score = Math.min(1.5, score);
+    const meta = t.metadata || {};
+    const voteCount = Number(meta.vote_count) || 0;
     const origin = deriveOriginFromMeta(meta, meta.original_language || null);
 
     results.push({

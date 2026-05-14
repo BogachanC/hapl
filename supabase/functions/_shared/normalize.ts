@@ -40,6 +40,45 @@ export function isStopword(tok: string): boolean {
 }
 
 /**
+ * Split a (possibly partial) query string into:
+ *  - complete: meaningful, non-stopword tokens that are fully typed
+ *  - partial : the trailing in-progress token (if the user hasn't typed a
+ *              space yet). Stopwords are NOT used as partials — once the
+ *              user types "and" or "ve" we just wait for the next token.
+ *  - endsWithSpace: true when the raw input ends with whitespace
+ *
+ * Used by typeahead mode in db-search to allow last-token prefix matching
+ * (e.g. "fast and fur" → complete=["fast"], partial="fur").
+ */
+export function splitQueryTokens(s: string): {
+  complete: string[];
+  partial: string | null;
+  endsWithSpace: boolean;
+} {
+  if (!s) return { complete: [], partial: null, endsWithSpace: false };
+  const endsWithSpace = /\s$/.test(s);
+  const all = normalizeTitle(s).split(" ").filter(Boolean);
+  let partial: string | null = null;
+  let completeRaw = all;
+  if (!endsWithSpace && all.length > 0) {
+    partial = all[all.length - 1];
+    completeRaw = all.slice(0, -1);
+  }
+  const seen = new Set<string>();
+  const complete: string[] = [];
+  for (const t of completeRaw) {
+    if (t.length < 2) continue;
+    if (STOPWORDS.has(t)) continue;
+    if (seen.has(t)) continue;
+    seen.add(t);
+    complete.push(t);
+  }
+  // Drop partial if it's exactly a stopword — user is mid-bridge word.
+  if (partial && (STOPWORDS.has(partial) || partial.length < 1)) partial = null;
+  return { complete, partial, endsWithSpace };
+}
+
+/**
  * Tokens that should drive search candidacy and scoring. Filters out:
  * - stopwords (and, ve, the, ile, ...)
  * - tokens shorter than 2 chars

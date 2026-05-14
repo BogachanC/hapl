@@ -8,7 +8,7 @@
 // Strong-result rule: if the top hit has score >= 0.85 AND at least 3
 // providered results exist, the caller skips TMDB / Firecrawl entirely.
 
-import { normalizeTitle, meaningfulTokens } from "./normalize.ts";
+import { normalizeTitle, meaningfulTokens, splitQueryTokens } from "./normalize.ts";
 import { getAliasGroupMembers } from "./aliases.ts";
 import { tmdbImage } from "./tmdb.ts";
 
@@ -51,6 +51,11 @@ export interface DbSearchOptions {
   requireAvailable?: boolean;
   /** Hard cap. */
   limit?: number;
+  /**
+   * "typeahead" → last meaningful token treated as prefix (user still typing).
+   * "full"      → strict whole-token matching (default).
+   */
+  mode?: "typeahead" | "full";
 }
 
 export interface DbSearchResult {
@@ -100,18 +105,19 @@ function kindsForCategory(cat: string | null | undefined): string[] | null {
 
 /**
  * Resolve which (tmdb_id, tmdb_type) pairs the query refers to via:
- * - exact normalized title
- * - exact normalized alias
- * - prefix on title
- * - trigram similarity on title + alias
+ * - exact normalized title / alias
+ * - prefix on title / alias (full normalized query)
+ * - per-token trigram on title + alias (meaningful tokens only)
+ * - typeahead-only: last meaningful token treated as a token-prefix
  *
  * Returns a Map keyed by `${type}:${tmdb_id}` → match metadata for scoring.
  */
 async function resolveCandidates(
   sb: any,
-  q: string,
+  rawQuery: string,
+  norm: string,
+  mode: "typeahead" | "full",
 ): Promise<Map<string, { kind: "exact_title" | "exact_alias" | "prefix" | "trgm"; sim: number; matched: number }>> {
-  const norm = q;
   const candidates = new Map<string, { kind: "exact_title" | "exact_alias" | "prefix" | "trgm"; sim: number; matched: number }>();
 
   const upgrade = (
@@ -129,93 +135,118 @@ async function resolveCandidates(
     }
   };
 
-  const queryMeaningful = meaningfulTokens(norm);
-  const queryMeaningfulSet = new Set(queryMeaningful);
-  const requireMulti = queryMeaningful.length >= 2;
+  const split = splitQueryTokens(rawQuery);
+  const completeTokens = split.complete;
+  const partial = mode === "typeahead" ? split.partial : null;
+  // For "full" mode, treat the trailing token as complete too.
+  const fullMeaningful = mode === "full" ? meaningfulTokens(norm) : completeTokens;
+  const totalMeaningful = mode === "typeahead"
+    ? completeTokens.length + (partial ? 1 : 0)
+    : fullMeaningful.length;
+  const requireMulti = totalMeaningful >= 2;
+  const completeSet = new Set(mode === "full" ? fullMeaningful : completeTokens);
 
-  // 1) exact normalized title
+  // Helper: count whole-token matches + (typeahead) partial-prefix match
+  const countMatches = (candTokens: Set<string>): number => {
+    let n = 0;
+    for (const t of completeSet) if (candTokens.has(t)) n++;
+    if (partial) {
+      for (const t of candTokens) {
+        if (t.startsWith(partial)) { n++; break; }
+      }
+    }
+    return n;
+  };
+
+  // 1) exact normalized title / alias
   {
     const { data } = await sb
       .from("content_titles")
       .select("tmdb_id, tmdb_type")
       .eq("normalized_title", norm)
       .limit(20);
-    for (const r of data || []) upgrade(`${r.tmdb_type}:${r.tmdb_id}`, "exact_title", 1, queryMeaningful.length);
+    for (const r of data || []) upgrade(`${r.tmdb_type}:${r.tmdb_id}`, "exact_title", 1, totalMeaningful);
   }
-
-  // 2) exact alias
   {
     const { data } = await sb
       .from("content_title_aliases")
       .select("tmdb_id, tmdb_type")
       .eq("normalized_alias", norm)
       .limit(50);
-    for (const r of data || []) upgrade(`${r.tmdb_type}:${r.tmdb_id}`, "exact_alias", 0.95, queryMeaningful.length);
+    for (const r of data || []) upgrade(`${r.tmdb_type}:${r.tmdb_id}`, "exact_alias", 0.95, totalMeaningful);
   }
 
-  // 3) prefix on title (only for queries >= 3 chars)
-  if (norm.length >= 3) {
-    const { data } = await sb
-      .from("content_titles")
-      .select("tmdb_id, tmdb_type")
-      .like("normalized_title", `${norm}%`)
-      .limit(40);
-    for (const r of data || []) upgrade(`${r.tmdb_type}:${r.tmdb_id}`, "prefix", 0.85, queryMeaningful.length);
+  // 2) prefix on title / alias with full normalized query
+  if (norm.length >= 2) {
+    const [t1, t2] = await Promise.all([
+      sb.from("content_titles").select("tmdb_id, tmdb_type").like("normalized_title", `${norm}%`).limit(40),
+      sb.from("content_title_aliases").select("tmdb_id, tmdb_type").like("normalized_alias", `${norm}%`).limit(60),
+    ]);
+    for (const r of t1.data || []) upgrade(`${r.tmdb_type}:${r.tmdb_id}`, "prefix", 0.85, totalMeaningful);
+    for (const r of t2.data || []) upgrade(`${r.tmdb_type}:${r.tmdb_id}`, "prefix", 0.80, totalMeaningful);
   }
 
-  // 4) trigram on title — only meaningful tokens (skip stopwords like "and", "ve")
-  if (norm.length >= 3 && queryMeaningful.length > 0) {
-    const tokens = queryMeaningful.filter((t) => t.length >= 3).slice(0, 4);
-    // Title trgm: count meaningful matches, gate single-token-only candidates if multi-token query.
-    const titleHits = new Map<string, { sim: number; matched: Set<string> }>();
-    for (const tok of tokens) {
-      const { data } = await sb
-        .from("content_titles")
-        .select("tmdb_id, tmdb_type, normalized_title")
-        .ilike("normalized_title", `%${tok}%`)
-        .limit(40);
-      for (const r of data || []) {
+  // 3) per-token trgm on title + alias
+  // Tokens to fetch DB rows by: complete (≥3 chars) + partial (≥2 chars in typeahead).
+  const fetchTokens: string[] = [];
+  for (const tok of (mode === "full" ? fullMeaningful : completeTokens)) {
+    if (tok.length >= 3) fetchTokens.push(tok);
+  }
+  if (partial && partial.length >= 2) fetchTokens.push(partial);
+  const tokensToFetch = Array.from(new Set(fetchTokens)).slice(0, 4);
+
+  if (tokensToFetch.length > 0) {
+    const titleHits = new Map<string, { sim: number; matched: number }>();
+    const aliasHits = new Map<string, { matched: number }>();
+
+    const titleTasks = tokensToFetch.map((tok) =>
+      sb.from("content_titles").select("tmdb_id, tmdb_type, normalized_title").ilike("normalized_title", `%${tok}%`).limit(40)
+    );
+    const aliasTasks = tokensToFetch.map((tok) =>
+      sb.from("content_title_aliases").select("tmdb_id, tmdb_type, normalized_alias").ilike("normalized_alias", `%${tok}%`).limit(60)
+    );
+    const [titleRes, aliasRes] = await Promise.all([Promise.all(titleTasks), Promise.all(aliasTasks)]);
+
+    const seenTitleKey = new Set<string>();
+    for (const res of titleRes) {
+      for (const r of res.data || []) {
         const key = `${r.tmdb_type}:${r.tmdb_id}`;
+        if (seenTitleKey.has(key)) continue;
+        seenTitleKey.add(key);
         const candTokens = new Set(String(r.normalized_title || "").split(" "));
-        let inter = 0;
-        const matchedSet = new Set<string>();
-        for (const t of queryMeaningfulSet) if (candTokens.has(t)) { inter++; matchedSet.add(t); }
-        const sim = inter / Math.max(queryMeaningful.length, candTokens.size);
-        const prev = titleHits.get(key);
-        if (!prev) titleHits.set(key, { sim, matched: matchedSet });
-        else {
-          for (const m of matchedSet) prev.matched.add(m);
-          if (sim > prev.sim) prev.sim = sim;
-        }
+        const matched = countMatches(candTokens);
+        if (matched === 0) continue;
+        const sim = matched / Math.max(totalMeaningful, 1);
+        titleHits.set(key, { sim, matched });
       }
     }
     for (const [key, hit] of titleHits) {
-      if (requireMulti && hit.matched.size < 2) continue; // skip "Harry Potter and ..." matched only on stopword
-      const [t, idStr] = key.split(":");
-      upgrade(key, "trgm", Math.max(0.3, hit.sim), hit.matched.size);
+      if (requireMulti && hit.matched < 2) continue;
+      upgrade(key, "trgm", Math.max(0.3, hit.sim), hit.matched);
     }
 
-    // Alias trgm: same multi-token gate. Aggregate matched tokens across alias rows per title.
-    const aliasHits = new Map<string, Set<string>>();
-    for (const tok of tokens) {
-      const { data } = await sb
-        .from("content_title_aliases")
-        .select("tmdb_id, tmdb_type, normalized_alias")
-        .ilike("normalized_alias", `%${tok}%`)
-        .limit(60);
-      for (const r of data || []) {
+    // Aggregate matched-token count across multiple alias rows per title.
+    const aliasMatchSets = new Map<string, Set<string>>();
+    for (const res of aliasRes) {
+      for (const r of res.data || []) {
         const key = `${r.tmdb_type}:${r.tmdb_id}`;
         const aliasTokens = new Set(String(r.normalized_alias || "").split(" "));
-        const matched = aliasHits.get(key) ?? new Set<string>();
-        for (const t of queryMeaningfulSet) if (aliasTokens.has(t)) matched.add(t);
-        aliasHits.set(key, matched);
+        const set = aliasMatchSets.get(key) ?? new Set<string>();
+        for (const t of completeSet) if (aliasTokens.has(t)) set.add(t);
+        if (partial) {
+          for (const at of aliasTokens) {
+            if (at.startsWith(partial)) { set.add(`__partial__:${partial}`); break; }
+          }
+        }
+        aliasMatchSets.set(key, set);
       }
     }
-    for (const [key, matched] of aliasHits) {
-      if (requireMulti && matched.size < 2) continue;
-      if (matched.size === 0) continue;
-      const sim = matched.size / queryMeaningful.length;
-      upgrade(key, "trgm", Math.max(0.3, sim), matched.size);
+    for (const [key, set] of aliasMatchSets) {
+      const matched = set.size;
+      if (matched === 0) continue;
+      if (requireMulti && matched < 2) continue;
+      const sim = matched / Math.max(totalMeaningful, 1);
+      upgrade(key, "trgm", Math.max(0.3, sim), matched);
     }
   }
 
@@ -230,7 +261,8 @@ export async function searchTitlesInDb(
   const norm = normalizeTitle(rawQuery);
   if (!norm) return { results: [], topScore: 0 };
 
-  const candidates = await resolveCandidates(sb, norm);
+  const mode = opts.mode === "typeahead" ? "typeahead" : "full";
+  const candidates = await resolveCandidates(sb, rawQuery, norm, mode);
   if (candidates.size === 0) return { results: [], topScore: 0 };
 
   const movieIds: number[] = [];

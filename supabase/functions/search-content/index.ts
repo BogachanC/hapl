@@ -462,7 +462,7 @@ serve(async (req) => {
 
   try {
     const body = await req.json().catch(() => ({}));
-    const { query, provider, category } = body || {};
+    const { query, provider, category, mode: rawMode } = body || {};
     if (!query || typeof query !== "string" || !query.trim()) {
       return new Response(JSON.stringify({ error: "query parametresi zorunlu" }), {
         status: 400,
@@ -473,9 +473,10 @@ serve(async (req) => {
       typeof provider === "string" && provider.trim() ? provider.trim() : null;
     const categoryFilter: string | null =
       typeof category === "string" && category.trim() ? category.trim() : null;
+    const mode: "typeahead" | "full" = rawMode === "typeahead" ? "typeahead" : "full";
 
     const baseKey = cacheKey(query);
-    const key = `${baseKey}:${categoryFilter ?? "all"}:${providerSlug ?? "all"}`;
+    const key = `${baseKey}:${categoryFilter ?? "all"}:${providerSlug ?? "all"}:${mode}`;
 
     // Background scheduler — survives past response.
     const ert: any = (globalThis as any).EdgeRuntime;
@@ -490,7 +491,7 @@ serve(async (req) => {
 
     const writeTelemetry = (
       results: ContentResultOut[],
-      source: "db" | "tmdb_fallback" | "mixed",
+      source: "db" | "tmdb_fallback" | "mixed" | "cache",
     ) => {
       bg(
         sb.from("search_events").insert({
@@ -502,6 +503,7 @@ serve(async (req) => {
           selected_category: categoryFilter,
           selected_provider: providerSlug,
           source,
+          mode,
         }),
       );
     };
@@ -509,9 +511,9 @@ serve(async (req) => {
     // 1. Cache
     const cached = await getFromCache(sb, key);
     if (cached) {
-      console.log(`[hapl] cache hit: ${key}`);
-      writeTelemetry(cached, "db");
-      return new Response(JSON.stringify({ results: cached, cached: true, source: "cache" }), {
+      console.log(`[hapl] cache hit: ${key} mode=${mode}`);
+      writeTelemetry(cached, "cache");
+      return new Response(JSON.stringify({ results: cached, cached: true, source: "cache", mode }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -522,10 +524,27 @@ serve(async (req) => {
       category: categoryFilter,
       requireAvailable: true,
       limit: 20,
+      mode,
     }).catch((e) => {
       console.error("[hapl] db-search error:", e);
       return { results: [] as DbContentResultOut[], topScore: 0 };
     });
+
+    // Typeahead mode: never call TMDB/Firecrawl. Latency-sensitive UX,
+    // and the user is still typing — DB-only result is the right tradeoff.
+    if (mode === "typeahead") {
+      const out: ContentResultOut[] = dbHit.results.map(({ _score, ...r }) => r);
+      console.log(
+        `[hapl] typeahead DB-only: query="${trimmedQuery}" topScore=${dbHit.topScore.toFixed(2)} count=${out.length}`,
+      );
+      if (out.length > 0) {
+        writeToCache(sb, key, out).catch((e) => console.error("cache write:", e));
+      }
+      writeTelemetry(out, "db");
+      return new Response(JSON.stringify({ results: out, cached: false, source: "db", mode }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     const STRONG_DB = dbHit.topScore >= 0.85 && dbHit.results.length >= 3;
     if (STRONG_DB) {
@@ -538,7 +557,7 @@ serve(async (req) => {
       // Cache (only if any TR-available result, which by construction is true here)
       writeToCache(sb, key, out).catch((e) => console.error("cache write:", e));
       writeTelemetry(out, "db");
-      return new Response(JSON.stringify({ results: out, cached: false, source: "db" }), {
+      return new Response(JSON.stringify({ results: out, cached: false, source: "db", mode }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -599,7 +618,7 @@ serve(async (req) => {
 
     if (ranked.length === 0 && dbHit.results.length === 0) {
       writeTelemetry([], "tmdb_fallback");
-      return new Response(JSON.stringify({ results: [], source: "tmdb_fallback" }), {
+      return new Response(JSON.stringify({ results: [], source: "tmdb_fallback", mode }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -697,7 +716,7 @@ serve(async (req) => {
     writeTelemetry(sortedResults, source);
 
     return new Response(
-      JSON.stringify({ results: sortedResults, cached: false, source }),
+      JSON.stringify({ results: sortedResults, cached: false, source, mode }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err: any) {

@@ -36,7 +36,8 @@ interface SearchState {
   hasSearched: boolean;
 }
 
-const DEBOUNCE_MS = 300;
+const TYPEAHEAD_DEBOUNCE_MS = 250;
+const FULL_DELAY_MS = 800; // after this much idle, upgrade to full search
 
 export function useContentSearch() {
   const [state, setState] = useState<SearchState>({
@@ -46,16 +47,16 @@ export function useContentSearch() {
     hasSearched: false,
   });
   const [query, setQuery] = useState("");
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const typeaheadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fullTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  const fetchResults = useCallback(async (q: string) => {
+  const fetchResults = useCallback(async (q: string, mode: "typeahead" | "full") => {
     if (!q.trim()) {
       setState({ results: [], loading: false, error: null, hasSearched: false });
       return;
     }
 
-    // Cancel previous in-flight request
     if (abortRef.current) abortRef.current.abort();
     abortRef.current = new AbortController();
 
@@ -63,7 +64,7 @@ export function useContentSearch() {
 
     try {
       const { data, error } = await supabase.functions.invoke("search-content", {
-        body: { query: q.trim() },
+        body: { query: q.trim(), mode },
       });
 
       if (error) throw new Error(error.message);
@@ -86,30 +87,36 @@ export function useContentSearch() {
     }
   }, []);
 
-  // Debounced search on query change
+  // Debounced search: typeahead first, then upgrade to full once query is stable.
   useEffect(() => {
-    if (timerRef.current) clearTimeout(timerRef.current);
+    if (typeaheadTimer.current) clearTimeout(typeaheadTimer.current);
+    if (fullTimer.current) clearTimeout(fullTimer.current);
 
     if (!query.trim()) {
       setState({ results: [], loading: false, error: null, hasSearched: false });
       return;
     }
 
-    // Show loading immediately
     setState((prev) => ({ ...prev, loading: true, hasSearched: true }));
 
-    timerRef.current = setTimeout(() => {
-      fetchResults(query);
-    }, DEBOUNCE_MS);
+    typeaheadTimer.current = setTimeout(() => {
+      fetchResults(query, "typeahead");
+    }, TYPEAHEAD_DEBOUNCE_MS);
+
+    fullTimer.current = setTimeout(() => {
+      fetchResults(query, "full");
+    }, TYPEAHEAD_DEBOUNCE_MS + FULL_DELAY_MS);
 
     return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
+      if (typeaheadTimer.current) clearTimeout(typeaheadTimer.current);
+      if (fullTimer.current) clearTimeout(fullTimer.current);
     };
   }, [query, fetchResults]);
 
   const clear = useCallback(() => {
     setQuery("");
-    if (timerRef.current) clearTimeout(timerRef.current);
+    if (typeaheadTimer.current) clearTimeout(typeaheadTimer.current);
+    if (fullTimer.current) clearTimeout(fullTimer.current);
     if (abortRef.current) abortRef.current.abort();
     setState({ results: [], loading: false, error: null, hasSearched: false });
   }, []);

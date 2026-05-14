@@ -559,6 +559,45 @@ export type Database = {
         }
         Relationships: []
       }
+      search_events: {
+        Row: {
+          created_at: string
+          id: string
+          normalized_query: string
+          raw_query: string
+          result_count: number
+          selected_category: string | null
+          selected_provider: string | null
+          source: string
+          top_result_title: string | null
+          top_result_tmdb_id: number | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          normalized_query: string
+          raw_query: string
+          result_count?: number
+          selected_category?: string | null
+          selected_provider?: string | null
+          source: string
+          top_result_title?: string | null
+          top_result_tmdb_id?: number | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          normalized_query?: string
+          raw_query?: string
+          result_count?: number
+          selected_category?: string | null
+          selected_provider?: string | null
+          source?: string
+          top_result_title?: string | null
+          top_result_tmdb_id?: number | null
+        }
+        Relationships: []
+      }
       streaming_providers: {
         Row: {
           created_at: string

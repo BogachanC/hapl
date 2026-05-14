@@ -479,9 +479,10 @@ serve(async (req) => {
 
     // Background scheduler — survives past response.
     const ert: any = (globalThis as any).EdgeRuntime;
-    const bg = (p: Promise<any>) => {
-      if (ert?.waitUntil) ert.waitUntil(p.catch(() => {}));
-      else p.catch(() => {});
+    const bg = (p: any) => {
+      // Postgrest builders are thenable but lack .catch — wrap in Promise.resolve
+      const prom = Promise.resolve(p).catch(() => {});
+      if (ert?.waitUntil) ert.waitUntil(prom);
     };
 
     const trimmedQuery = query.trim();

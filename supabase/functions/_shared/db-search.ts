@@ -387,6 +387,30 @@ export async function searchTitlesInDb(
       if (vc >= 500) score += 0.04;
       else if (vc >= 100) score += 0.02;
     }
+
+    // ---- Main-entry vs variant/spin-off polish ----
+    // Generic, content-agnostic: penalise titles that look like a subtitle
+    // variant, spin-off, special, reunion, behind-the-scenes, documentary,
+    // etc. Boost titles that look like the main canonical entry.
+    const rawTitle = `${t.title || ""} ${t.original_title || ""}`.toLowerCase();
+    const VARIANT_RE = /\b(fenomen|reunion|behind|making|special|spin[- ]?off|aftershow|after show|untold|explained|the phenomenon|hobbs|shaw|tokyo)\b/i;
+    const hasSubtitle = /[:\-–—]/.test(t.title || "") || /[:\-–—]/.test(t.original_title || "");
+    let variantPenalty = 0;
+    if (VARIANT_RE.test(rawTitle)) variantPenalty += 0.18;
+    if (hasSubtitle) variantPenalty += 0.06;
+    if (t.content_kind === "documentary") variantPenalty += 0.05;
+    score -= variantPenalty;
+
+    // Main-entry bonus: canonical group member, no subtitle markers,
+    // strong popularity → likely the main franchise entry.
+    const metaMain = t.metadata || {};
+    const vcMain = Number(metaMain.vote_count) || 0;
+    if (isCanonical && !hasSubtitle && !VARIANT_RE.test(rawTitle)) {
+      if (vcMain >= 2000) score += 0.10;
+      else if (vcMain >= 500) score += 0.06;
+      else score += 0.03;
+    }
+
     // Hard cap for trgm: even with boosts, never exceed 0.84 unless canonical.
     if (cand.kind === "trgm" && !isCanonical) score = Math.min(score, 0.84);
 

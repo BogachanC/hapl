@@ -614,8 +614,14 @@ serve(async (req) => {
 
     // Merge TMDB + DB-first results (DB rows kept as supplementary signal).
     // De-dupe by tmdb id+type; TMDB enriched row wins when both present.
+    // Track DB _score per id so the final ranker can use real relevance
+    // (not a default 0.5) for DB-only rows.
     const merged: ContentResultOut[] = [];
     const seenIds = new Set<string>();
+    const dbScoreById = new Map<string, number>();
+    for (const dr of dbHit.results) {
+      dbScoreById.set(`${dr.type}:${dr.id}`, dr._score ?? 0);
+    }
     for (const r of tmdbResults) {
       const k = `${r.type}:${r.id}`;
       if (seenIds.has(k)) continue;
@@ -643,15 +649,21 @@ serve(async (req) => {
 
     const scored = merged.map((r) => {
       const meta = rankedById.get(`${r.type}:${r.id}`);
-      const baseRel = meta?.score ?? 0.5;
+      const dbScore = dbScoreById.get(`${r.type}:${r.id}`);
+      // Real relevance: TMDB rank score, else DB _score, else 0 (NOT 0.5).
+      const baseRel = meta?.score ?? dbScore ?? 0;
       const titleNorm = normalizeTitle(r.title);
       const origNorm = normalizeTitle(meta?.original || "");
       const isExact = titleNorm === qNormFinal || origNorm === qNormFinal;
       const hasProvider = r.platforms.length > 0;
-      const watchBoost = hasProvider ? 0.30 : 0;
+      // Boost gate: weak relevance must NOT be lifted into the main list by
+      // provider/popularity boosts. Only apply boosts when baseRel is healthy
+      // OR the candidate is an exact title match.
+      const boostsAllowed = baseRel >= 0.5 || isExact;
+      const watchBoost = (hasProvider && boostsAllowed) ? 0.30 : 0;
       const noProviderPenalty = (!hasProvider && !isExact) ? 0.45 : 0;
       const exactNudge = isExact ? 0.10 : 0;
-      const confSignal = (r.confidence ?? 0) / 1000;
+      const confSignal = boostsAllowed ? (r.confidence ?? 0) / 1000 : 0;
       let aliasGroupBoost = 0;
       if (aliasGroup) {
         const candIsGroupMember =
@@ -661,11 +673,19 @@ serve(async (req) => {
       }
       const finalScore =
         baseRel + watchBoost + exactNudge + confSignal + aliasGroupBoost - noProviderPenalty;
-      return { r, finalScore };
+      return { r, finalScore, baseRel };
     });
 
-    scored.sort((a, b) => b.finalScore - a.finalScore);
-    const sortedResults = scored.map((s) => s.r);
+    // Drop irrelevant noise: anything with baseRel < 0.3 AND not in alias group
+    // shouldn't appear in the main results list at all.
+    const filtered = scored.filter((s) => {
+      if (s.baseRel >= 0.3) return true;
+      const tn = normalizeTitle(s.r.title);
+      if (aliasGroup && tn && aliasGroup.has(tn)) return true;
+      return false;
+    });
+    filtered.sort((a, b) => b.finalScore - a.finalScore);
+    const sortedResults = filtered.map((s) => s.r);
 
     const trAvailable = sortedResults.filter((r) => r.available_in_tr);
     if (trAvailable.length > 0) {

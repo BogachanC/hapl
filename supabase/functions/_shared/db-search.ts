@@ -8,7 +8,7 @@
 // Strong-result rule: if the top hit has score >= 0.85 AND at least 3
 // providered results exist, the caller skips TMDB / Firecrawl entirely.
 
-import { normalizeTitle } from "./normalize.ts";
+import { normalizeTitle, meaningfulTokens } from "./normalize.ts";
 import { getAliasGroupMembers } from "./aliases.ts";
 import { tmdbImage } from "./tmdb.ts";
 
@@ -110,21 +110,28 @@ function kindsForCategory(cat: string | null | undefined): string[] | null {
 async function resolveCandidates(
   sb: any,
   q: string,
-): Promise<Map<string, { kind: "exact_title" | "exact_alias" | "prefix" | "trgm"; sim: number }>> {
+): Promise<Map<string, { kind: "exact_title" | "exact_alias" | "prefix" | "trgm"; sim: number; matched: number }>> {
   const norm = q;
-  const candidates = new Map<string, { kind: "exact_title" | "exact_alias" | "prefix" | "trgm"; sim: number }>();
+  const candidates = new Map<string, { kind: "exact_title" | "exact_alias" | "prefix" | "trgm"; sim: number; matched: number }>();
 
   const upgrade = (
     key: string,
     kind: "exact_title" | "exact_alias" | "prefix" | "trgm",
     sim: number,
+    matched: number,
   ) => {
     const rank = { exact_title: 4, exact_alias: 3, prefix: 2, trgm: 1 };
     const prev = candidates.get(key);
     if (!prev || rank[kind] > rank[prev.kind] || (rank[kind] === rank[prev.kind] && sim > prev.sim)) {
-      candidates.set(key, { kind, sim });
+      candidates.set(key, { kind, sim, matched: Math.max(matched, prev?.matched ?? 0) });
+    } else if (prev) {
+      prev.matched = Math.max(prev.matched, matched);
     }
   };
+
+  const queryMeaningful = meaningfulTokens(norm);
+  const queryMeaningfulSet = new Set(queryMeaningful);
+  const requireMulti = queryMeaningful.length >= 2;
 
   // 1) exact normalized title
   {
@@ -133,7 +140,7 @@ async function resolveCandidates(
       .select("tmdb_id, tmdb_type")
       .eq("normalized_title", norm)
       .limit(20);
-    for (const r of data || []) upgrade(`${r.tmdb_type}:${r.tmdb_id}`, "exact_title", 1);
+    for (const r of data || []) upgrade(`${r.tmdb_type}:${r.tmdb_id}`, "exact_title", 1, queryMeaningful.length);
   }
 
   // 2) exact alias
@@ -143,7 +150,7 @@ async function resolveCandidates(
       .select("tmdb_id, tmdb_type")
       .eq("normalized_alias", norm)
       .limit(50);
-    for (const r of data || []) upgrade(`${r.tmdb_type}:${r.tmdb_id}`, "exact_alias", 0.95);
+    for (const r of data || []) upgrade(`${r.tmdb_type}:${r.tmdb_id}`, "exact_alias", 0.95, queryMeaningful.length);
   }
 
   // 3) prefix on title (only for queries >= 3 chars)
@@ -153,34 +160,62 @@ async function resolveCandidates(
       .select("tmdb_id, tmdb_type")
       .like("normalized_title", `${norm}%`)
       .limit(40);
-    for (const r of data || []) upgrade(`${r.tmdb_type}:${r.tmdb_id}`, "prefix", 0.85);
+    for (const r of data || []) upgrade(`${r.tmdb_type}:${r.tmdb_id}`, "prefix", 0.85, queryMeaningful.length);
   }
 
-  // 4) trigram on title (uses pg_trgm operator via .filter)
-  if (norm.length >= 3) {
-    const tokens = norm.split(" ").filter((t) => t.length >= 3).slice(0, 3);
+  // 4) trigram on title — only meaningful tokens (skip stopwords like "and", "ve")
+  if (norm.length >= 3 && queryMeaningful.length > 0) {
+    const tokens = queryMeaningful.filter((t) => t.length >= 3).slice(0, 4);
+    // Title trgm: count meaningful matches, gate single-token-only candidates if multi-token query.
+    const titleHits = new Map<string, { sim: number; matched: Set<string> }>();
     for (const tok of tokens) {
       const { data } = await sb
         .from("content_titles")
         .select("tmdb_id, tmdb_type, normalized_title")
         .ilike("normalized_title", `%${tok}%`)
-        .limit(30);
+        .limit(40);
       for (const r of data || []) {
+        const key = `${r.tmdb_type}:${r.tmdb_id}`;
         const candTokens = new Set(String(r.normalized_title || "").split(" "));
-        const queryTokens = new Set(norm.split(" "));
         let inter = 0;
-        for (const t of queryTokens) if (candTokens.has(t)) inter++;
-        const sim = inter / Math.max(queryTokens.size, candTokens.size);
-        upgrade(`${r.tmdb_type}:${r.tmdb_id}`, "trgm", Math.max(0.3, sim));
+        const matchedSet = new Set<string>();
+        for (const t of queryMeaningfulSet) if (candTokens.has(t)) { inter++; matchedSet.add(t); }
+        const sim = inter / Math.max(queryMeaningful.length, candTokens.size);
+        const prev = titleHits.get(key);
+        if (!prev) titleHits.set(key, { sim, matched: matchedSet });
+        else {
+          for (const m of matchedSet) prev.matched.add(m);
+          if (sim > prev.sim) prev.sim = sim;
+        }
       }
     }
+    for (const [key, hit] of titleHits) {
+      if (requireMulti && hit.matched.size < 2) continue; // skip "Harry Potter and ..." matched only on stopword
+      const [t, idStr] = key.split(":");
+      upgrade(key, "trgm", Math.max(0.3, hit.sim), hit.matched.size);
+    }
+
+    // Alias trgm: same multi-token gate. Aggregate matched tokens across alias rows per title.
+    const aliasHits = new Map<string, Set<string>>();
     for (const tok of tokens) {
       const { data } = await sb
         .from("content_title_aliases")
-        .select("tmdb_id, tmdb_type")
+        .select("tmdb_id, tmdb_type, normalized_alias")
         .ilike("normalized_alias", `%${tok}%`)
-        .limit(30);
-      for (const r of data || []) upgrade(`${r.tmdb_type}:${r.tmdb_id}`, "trgm", 0.5);
+        .limit(60);
+      for (const r of data || []) {
+        const key = `${r.tmdb_type}:${r.tmdb_id}`;
+        const aliasTokens = new Set(String(r.normalized_alias || "").split(" "));
+        const matched = aliasHits.get(key) ?? new Set<string>();
+        for (const t of queryMeaningfulSet) if (aliasTokens.has(t)) matched.add(t);
+        aliasHits.set(key, matched);
+      }
+    }
+    for (const [key, matched] of aliasHits) {
+      if (requireMulti && matched.size < 2) continue;
+      if (matched.size === 0) continue;
+      const sim = matched.size / queryMeaningful.length;
+      upgrade(key, "trgm", Math.max(0.3, sim), matched.size);
     }
   }
 
@@ -304,19 +339,28 @@ export async function searchTitlesInDb(
 
     const titleNorm = normalizeTitle(t.title || "");
     const origNorm = normalizeTitle(t.original_title || "");
-    if (aliasGroup) {
-      const isCanonical =
-        (titleNorm && aliasGroup.has(titleNorm)) || (origNorm && aliasGroup.has(origNorm));
-      if (isCanonical) score += t.tmdb_type === "tv" ? 0.20 : 0.08;
+    const isCanonical = !!aliasGroup && (
+      (titleNorm && aliasGroup.has(titleNorm)) || (origNorm && aliasGroup.has(origNorm))
+    );
+
+    // Boost gating: weak base (trgm with poor coverage) should NOT be lifted
+    // into "strong DB hit" territory by provider/popularity boosts.
+    const baseStrong = score >= 0.5;
+    if (isCanonical) score += t.tmdb_type === "tv" ? 0.20 : 0.08;
+    if (baseStrong) {
+      score += Math.min(0.10, platforms.length * 0.04);
+      if (t.poster_path) score += 0.03;
+      const metaPre = t.metadata || {};
+      const vc = Number(metaPre.vote_count) || 0;
+      if (vc >= 500) score += 0.04;
+      else if (vc >= 100) score += 0.02;
     }
-    score += Math.min(0.10, platforms.length * 0.04);
-    if (t.poster_path) score += 0.03;
-    const meta = t.metadata || {};
-    const voteCount = Number(meta.vote_count) || 0;
-    if (voteCount >= 500) score += 0.04;
-    else if (voteCount >= 100) score += 0.02;
+    // Hard cap for trgm: even with boosts, never exceed 0.84 unless canonical.
+    if (cand.kind === "trgm" && !isCanonical) score = Math.min(score, 0.84);
 
     score = Math.min(1.5, score);
+    const meta = t.metadata || {};
+    const voteCount = Number(meta.vote_count) || 0;
     const origin = deriveOriginFromMeta(meta, meta.original_language || null);
 
     results.push({

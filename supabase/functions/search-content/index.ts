@@ -22,6 +22,7 @@ import {
   extractProvidersFromText,
   type ProviderRow,
 } from "../_shared/providers.ts";
+import { searchTitlesInDb, type DbContentResultOut } from "../_shared/db-search.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",

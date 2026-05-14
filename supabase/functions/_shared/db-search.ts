@@ -261,7 +261,8 @@ export async function searchTitlesInDb(
   const norm = normalizeTitle(rawQuery);
   if (!norm) return { results: [], topScore: 0 };
 
-  const candidates = await resolveCandidates(sb, norm);
+  const mode = opts.mode === "typeahead" ? "typeahead" : "full";
+  const candidates = await resolveCandidates(sb, rawQuery, norm, mode);
   if (candidates.size === 0) return { results: [], topScore: 0 };
 
   const movieIds: number[] = [];

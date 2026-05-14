@@ -618,7 +618,7 @@ serve(async (req) => {
 
     if (ranked.length === 0 && dbHit.results.length === 0) {
       writeTelemetry([], "tmdb_fallback");
-      return new Response(JSON.stringify({ results: [], source: "tmdb_fallback" }), {
+      return new Response(JSON.stringify({ results: [], source: "tmdb_fallback", mode }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }

@@ -491,7 +491,7 @@ serve(async (req) => {
 
     const writeTelemetry = (
       results: ContentResultOut[],
-      source: "db" | "tmdb_fallback" | "mixed",
+      source: "db" | "tmdb_fallback" | "mixed" | "cache",
     ) => {
       bg(
         sb.from("search_events").insert({
@@ -503,6 +503,7 @@ serve(async (req) => {
           selected_category: categoryFilter,
           selected_provider: providerSlug,
           source,
+          mode,
         }),
       );
     };
@@ -510,9 +511,9 @@ serve(async (req) => {
     // 1. Cache
     const cached = await getFromCache(sb, key);
     if (cached) {
-      console.log(`[hapl] cache hit: ${key}`);
-      writeTelemetry(cached, "db");
-      return new Response(JSON.stringify({ results: cached, cached: true, source: "cache" }), {
+      console.log(`[hapl] cache hit: ${key} mode=${mode}`);
+      writeTelemetry(cached, "cache");
+      return new Response(JSON.stringify({ results: cached, cached: true, source: "cache", mode }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -523,6 +524,7 @@ serve(async (req) => {
       category: categoryFilter,
       requireAvailable: true,
       limit: 20,
+      mode,
     }).catch((e) => {
       console.error("[hapl] db-search error:", e);
       return { results: [] as DbContentResultOut[], topScore: 0 };

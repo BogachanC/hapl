@@ -461,35 +461,90 @@ serve(async (req) => {
   const sb = createClient(SUPABASE_URL, SERVICE_KEY);
 
   try {
-    const { query } = await req.json();
+    const body = await req.json().catch(() => ({}));
+    const { query, provider, category } = body || {};
     if (!query || typeof query !== "string" || !query.trim()) {
       return new Response(JSON.stringify({ error: "query parametresi zorunlu" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+    const providerSlug: string | null =
+      typeof provider === "string" && provider.trim() ? provider.trim() : null;
+    const categoryFilter: string | null =
+      typeof category === "string" && category.trim() ? category.trim() : null;
 
-    const key = cacheKey(query);
+    const baseKey = cacheKey(query);
+    const key = `${baseKey}:${categoryFilter ?? "all"}:${providerSlug ?? "all"}`;
+
+    // Background scheduler — survives past response.
+    const ert: any = (globalThis as any).EdgeRuntime;
+    const bg = (p: Promise<any>) => {
+      if (ert?.waitUntil) ert.waitUntil(p.catch(() => {}));
+      else p.catch(() => {});
+    };
+
+    const trimmedQuery = query.trim();
+    const normTrim = normalizeTitle(trimmedQuery);
+
+    const writeTelemetry = (
+      results: ContentResultOut[],
+      source: "db" | "tmdb_fallback" | "mixed",
+    ) => {
+      bg(
+        sb.from("search_events").insert({
+          raw_query: trimmedQuery.slice(0, 200),
+          normalized_query: normTrim.slice(0, 200),
+          result_count: results.length,
+          top_result_tmdb_id: results[0]?.id ?? null,
+          top_result_title: results[0]?.title ?? null,
+          selected_category: categoryFilter,
+          selected_provider: providerSlug,
+          source,
+        }),
+      );
+    };
 
     // 1. Cache
     const cached = await getFromCache(sb, key);
     if (cached) {
       console.log(`[hapl] cache hit: ${key}`);
-      return new Response(JSON.stringify({ results: cached, cached: true }), {
+      writeTelemetry(cached, "db");
+      return new Response(JSON.stringify({ results: cached, cached: true, source: "cache" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // 2. TMDB multi-search + rank (with multilingual + franchise variant fallback)
-    const trimmedQuery = query.trim();
+    // 2. DB-FIRST search
+    const dbHit = await searchTitlesInDb(sb, trimmedQuery, {
+      providerSlug,
+      category: categoryFilter,
+      requireAvailable: true,
+      limit: 20,
+    }).catch((e) => {
+      console.error("[hapl] db-search error:", e);
+      return { results: [] as DbContentResultOut[], topScore: 0 };
+    });
 
-    // Combine MANUAL alias overrides (curated, hand-picked exceptions) with
-    // DB-cached alias expansions (TMDB alt_titles + translations, populated
-    // lazily by previous searches and hapl-refresh). Manual takes precedence
-    // by being injected first; dedupe by normalized form.
+    const STRONG_DB = dbHit.topScore >= 0.85 && dbHit.results.length >= 3;
+    if (STRONG_DB) {
+      // Strip internal _score before returning, keep ContentResultOut shape.
+      const out: ContentResultOut[] = dbHit.results.map(({ _score, ...r }) => r);
+      console.log(
+        `[hapl] DB-first hit: query="${trimmedQuery}" topScore=${dbHit.topScore.toFixed(2)} ` +
+        `count=${out.length} → skipping TMDB`,
+      );
+      // Cache (only if any TR-available result, which by construction is true here)
+      writeToCache(sb, key, out).catch((e) => console.error("cache write:", e));
+      writeTelemetry(out, "db");
+      return new Response(JSON.stringify({ results: out, cached: false, source: "db" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // 3. TMDB fallback pipeline (existing alias-aware multi-search)
     const manualAliases = getAliases(trimmedQuery);
     const dbAliases = await getAliasExpansions(sb, trimmedQuery).catch(() => [] as string[]);
-    const normTrim = normalizeTitle(trimmedQuery);
     const aliasSeen = new Set<string>([normTrim]);
     const aliasVariants: string[] = [];
     for (const v of [...manualAliases, ...dbAliases]) {
@@ -500,8 +555,6 @@ serve(async (req) => {
     }
 
     let fallbackUsed: string[] = [];
-
-    // 2a. Probe primary query + all alias variants in parallel.
     const primaryTask = tmdbMultiSearch(trimmedQuery, "tr-TR");
     const variantTasks = aliasVariants.map((v) => tmdbMultiSearch(v, "tr-TR"));
     const [raw, ...variantRaws] = await Promise.all([primaryTask, ...variantTasks]);
@@ -514,7 +567,6 @@ serve(async (req) => {
       fallbackUsed.push(`variant:${aliasVariants[i]}`);
     }
 
-    // Rank against ALL probed terms (primary + variants), keep best per item.
     let ranked = rankTmdbResults(query, mergedRaw);
     if (aliasVariants.length > 0) {
       for (const v of aliasVariants) {
@@ -525,10 +577,9 @@ serve(async (req) => {
     console.log(
       `[hapl] query="${query}" tmdb_raw=${raw.length} ` +
       `manual_aliases=${manualAliases.length} db_aliases=${dbAliases.length} ` +
-      `merged_raw=${mergedRaw.length} ranked=${ranked.length}`,
+      `merged_raw=${mergedRaw.length} ranked=${ranked.length} db_pre=${dbHit.results.length}`,
     );
 
-    // 2b. Weak-result fallback: en-US retry when nothing strong came back.
     const needsFallback = ranked.length === 0 || (ranked[0]?.score ?? 0) < 0.7;
     if (needsFallback) {
       const rawEn = await tmdbMultiSearch(trimmedQuery, "en-US");
@@ -541,33 +592,44 @@ serve(async (req) => {
         }
       }
     }
-
     if (fallbackUsed.length > 0) {
       console.log(`[hapl] fallback used: ${fallbackUsed.join(", ")} → ranked=${ranked.length}`);
     }
 
-    if (ranked.length === 0) {
-      return new Response(JSON.stringify({ results: [] }), {
+    if (ranked.length === 0 && dbHit.results.length === 0) {
+      writeTelemetry([], "tmdb_fallback");
+      return new Response(JSON.stringify({ results: [], source: "tmdb_fallback" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // 3. Load providers, enrich top N
+    // Enrich TMDB top N
     const providers = await loadProviders(sb);
     const top = ranked.slice(0, MAX_ENRICH);
     const enriched = await Promise.all(
       top.map((c) => enrichCandidate(sb, query, c, providers)),
     );
-    const results = enriched.filter((r): r is ContentResultOut => r !== null);
+    const tmdbResults = enriched.filter((r): r is ContentResultOut => r !== null);
 
-    // ── Final ranking: provider/watchable signal must dominate ─────────────
-    // Even after relevance + alias merging, provider-less or weakly-related
-    // entries can surface near the top because TMDB popularity inflates them.
-    // Build a composite final score that:
-    //   • boosts watchable titles (platforms.length > 0) strongly,
-    //   • penalises provider-less entries unless they're an exact title match,
-    //   • keeps exact normalized title match as the tie-breaker for queries
-    //     like "Dark", "Friends", "Behzat".
+    // Merge TMDB + DB-first results (DB rows kept as supplementary signal).
+    // De-dupe by tmdb id+type; TMDB enriched row wins when both present.
+    const merged: ContentResultOut[] = [];
+    const seenIds = new Set<string>();
+    for (const r of tmdbResults) {
+      const k = `${r.type}:${r.id}`;
+      if (seenIds.has(k)) continue;
+      seenIds.add(k);
+      merged.push(r);
+    }
+    for (const dr of dbHit.results) {
+      const k = `${dr.type}:${dr.id}`;
+      if (seenIds.has(k)) continue;
+      seenIds.add(k);
+      const { _score, ...rest } = dr;
+      merged.push(rest);
+    }
+
+    // Existing final ranking (alias-group / watchable / exact nudge)
     const qNormFinal = normalizeTitle(query);
     const aliasGroup = getAliasGroupMembers(query);
     const rankedById = new Map<string, { score: number; original: string }>();
@@ -578,55 +640,45 @@ serve(async (req) => {
       });
     }
 
-    const scored = results.map((r) => {
+    const scored = merged.map((r) => {
       const meta = rankedById.get(`${r.type}:${r.id}`);
       const baseRel = meta?.score ?? 0.5;
       const titleNorm = normalizeTitle(r.title);
       const origNorm = normalizeTitle(meta?.original || "");
       const isExact = titleNorm === qNormFinal || origNorm === qNormFinal;
       const hasProvider = r.platforms.length > 0;
-      // Watchable boost: 0.30 — large but not enough to flip an unrelated title.
       const watchBoost = hasProvider ? 0.30 : 0;
-      // Provider-less penalty: only when it's NOT an exact title match.
-      // Without this, TMDB-popular but provider-less items (book entries,
-      // alias hits like Stranger Things → Montauk) creep up.
       const noProviderPenalty = (!hasProvider && !isExact) ? 0.45 : 0;
-      // Exact title nudge so canonical match wins over equally-watchable siblings.
       const exactNudge = isExact ? 0.10 : 0;
-      // Confidence (0..100) acts as a soft secondary signal.
-      const confSignal = (r.confidence ?? 0) / 1000; // up to 0.10
-      // Alias-group canonical boost: when the user searched a known alias
-      // (e.g. "Money Heist") and a candidate's title/original_title is itself
-      // a member of the same alias group (e.g. "La Casa de Papel"), it is the
-      // canonical work. TV gets a stronger boost than movie because alias
-      // groups in this project map to canonical TV series; same-token movie
-      // siblings ("Darphane Soygunu" / "Coin Heist") must NOT outrank them.
+      const confSignal = (r.confidence ?? 0) / 1000;
       let aliasGroupBoost = 0;
       if (aliasGroup) {
         const candIsGroupMember =
           (titleNorm && aliasGroup.has(titleNorm)) ||
           (origNorm && aliasGroup.has(origNorm));
-        if (candIsGroupMember) {
-          aliasGroupBoost = r.type === "tv" ? 0.55 : 0.20;
-        }
+        if (candIsGroupMember) aliasGroupBoost = r.type === "tv" ? 0.55 : 0.20;
       }
       const finalScore =
         baseRel + watchBoost + exactNudge + confSignal + aliasGroupBoost - noProviderPenalty;
-      return { r, finalScore, baseRel, hasProvider, isExact, aliasGroupBoost };
+      return { r, finalScore };
     });
 
     scored.sort((a, b) => b.finalScore - a.finalScore);
     const sortedResults = scored.map((s) => s.r);
 
-    // 4. Cache & return (cache only when we have TR-available results)
     const trAvailable = sortedResults.filter((r) => r.available_in_tr);
     if (trAvailable.length > 0) {
       writeToCache(sb, key, sortedResults).catch((e) => console.error("cache write:", e));
     }
 
-    return new Response(JSON.stringify({ results: sortedResults, cached: false }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    const source: "tmdb_fallback" | "mixed" =
+      dbHit.results.length > 0 && tmdbResults.length > 0 ? "mixed" : "tmdb_fallback";
+    writeTelemetry(sortedResults, source);
+
+    return new Response(
+      JSON.stringify({ results: sortedResults, cached: false, source }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
   } catch (err: any) {
     console.error("[hapl] error:", err);
     return new Response(JSON.stringify({ error: err.message }), {

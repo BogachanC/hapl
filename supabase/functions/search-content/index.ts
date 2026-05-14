@@ -716,7 +716,7 @@ serve(async (req) => {
     writeTelemetry(sortedResults, source);
 
     return new Response(
-      JSON.stringify({ results: sortedResults, cached: false, source }),
+      JSON.stringify({ results: sortedResults, cached: false, source, mode }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err: any) {

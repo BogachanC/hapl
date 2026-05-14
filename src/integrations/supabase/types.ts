@@ -563,6 +563,7 @@ export type Database = {
         Row: {
           created_at: string
           id: string
+          mode: string | null
           normalized_query: string
           raw_query: string
           result_count: number
@@ -575,6 +576,7 @@ export type Database = {
         Insert: {
           created_at?: string
           id?: string
+          mode?: string | null
           normalized_query: string
           raw_query: string
           result_count?: number
@@ -587,6 +589,7 @@ export type Database = {
         Update: {
           created_at?: string
           id?: string
+          mode?: string | null
           normalized_query?: string
           raw_query?: string
           result_count?: number

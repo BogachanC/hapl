@@ -462,7 +462,7 @@ serve(async (req) => {
 
   try {
     const body = await req.json().catch(() => ({}));
-    const { query, provider, category } = body || {};
+    const { query, provider, category, mode: rawMode } = body || {};
     if (!query || typeof query !== "string" || !query.trim()) {
       return new Response(JSON.stringify({ error: "query parametresi zorunlu" }), {
         status: 400,
@@ -473,9 +473,10 @@ serve(async (req) => {
       typeof provider === "string" && provider.trim() ? provider.trim() : null;
     const categoryFilter: string | null =
       typeof category === "string" && category.trim() ? category.trim() : null;
+    const mode: "typeahead" | "full" = rawMode === "typeahead" ? "typeahead" : "full";
 
     const baseKey = cacheKey(query);
-    const key = `${baseKey}:${categoryFilter ?? "all"}:${providerSlug ?? "all"}`;
+    const key = `${baseKey}:${categoryFilter ?? "all"}:${providerSlug ?? "all"}:${mode}`;
 
     // Background scheduler — survives past response.
     const ert: any = (globalThis as any).EdgeRuntime;

@@ -23,6 +23,16 @@ export function tokenize(s: string): string[] {
   return normalizeTitle(s).split(" ").filter(Boolean);
 }
 
+/**
+ * Compact (spaceless) normalized form. Useful for matching titles that the
+ * user typed without spaces ("yanyana" → "yan yana", "buzdevri" → "buz devri").
+ * Callers SHOULD enforce a minimum length (≥5) before using this against the
+ * DB to avoid accidental wide matches on short queries.
+ */
+export function compactNormalizeTitle(s: string): string {
+  return normalizeTitle(s).replace(/\s+/g, "");
+}
+
 // Stopwords (EN + TR) — these tokens never produce candidates on their own
 // and contribute zero relevance signal. Normalized to ASCII lowercase to
 // match normalizeTitle output (ş→s, ı→i, etc.).

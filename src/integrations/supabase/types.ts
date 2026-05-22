@@ -247,6 +247,7 @@ export type Database = {
           id: string
           language: string | null
           normalized_alias: string
+          normalized_compact: string | null
           source: string
           tmdb_id: number
           tmdb_type: string
@@ -259,6 +260,7 @@ export type Database = {
           id?: string
           language?: string | null
           normalized_alias: string
+          normalized_compact?: string | null
           source: string
           tmdb_id: number
           tmdb_type: string
@@ -271,6 +273,7 @@ export type Database = {
           id?: string
           language?: string | null
           normalized_alias?: string
+          normalized_compact?: string | null
           source?: string
           tmdb_id?: number
           tmdb_type?: string
@@ -290,6 +293,7 @@ export type Database = {
           last_requested_at: string | null
           last_tmdb_sync_at: string | null
           metadata: Json
+          normalized_compact: string | null
           normalized_title: string | null
           original_title: string | null
           overview: string | null
@@ -312,6 +316,7 @@ export type Database = {
           last_requested_at?: string | null
           last_tmdb_sync_at?: string | null
           metadata?: Json
+          normalized_compact?: string | null
           normalized_title?: string | null
           original_title?: string | null
           overview?: string | null
@@ -334,6 +339,7 @@ export type Database = {
           last_requested_at?: string | null
           last_tmdb_sync_at?: string | null
           metadata?: Json
+          normalized_compact?: string | null
           normalized_title?: string | null
           original_title?: string | null
           overview?: string | null

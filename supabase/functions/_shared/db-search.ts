@@ -8,7 +8,7 @@
 // Strong-result rule: if the top hit has score >= 0.85 AND at least 3
 // providered results exist, the caller skips TMDB / Firecrawl entirely.
 
-import { normalizeTitle, meaningfulTokens, splitQueryTokens } from "./normalize.ts";
+import { normalizeTitle, meaningfulTokens, splitQueryTokens, compactNormalizeTitle } from "./normalize.ts";
 import { getAliasGroupMembers } from "./aliases.ts";
 import { tmdbImage } from "./tmdb.ts";
 
@@ -184,6 +184,31 @@ async function resolveCandidates(
     ]);
     for (const r of t1.data || []) upgrade(`${r.tmdb_type}:${r.tmdb_id}`, "prefix", 0.85, totalMeaningful);
     for (const r of t2.data || []) upgrade(`${r.tmdb_type}:${r.tmdb_id}`, "prefix", 0.80, totalMeaningful);
+  }
+
+  // 2b) compact (spaceless) exact + prefix match — lets users find titles
+  // regardless of whether they typed spaces ("yanyana" ↔ "yan yana",
+  // "buzdevri" ↔ "buz devri", "harrypotter" ↔ "harry potter").
+  // Guards: only when compact query length >= 5 to avoid short/wide hits.
+  const compactQuery = compactNormalizeTitle(rawQuery);
+  if (compactQuery.length >= 5) {
+    // exact compact
+    const [ct1, ct2] = await Promise.all([
+      sb.from("content_titles").select("tmdb_id, tmdb_type").eq("normalized_compact", compactQuery).limit(40),
+      sb.from("content_title_aliases").select("tmdb_id, tmdb_type").eq("normalized_compact", compactQuery).limit(60),
+    ]);
+    for (const r of ct1.data || []) upgrade(`${r.tmdb_type}:${r.tmdb_id}`, "exact_alias", 0.95, Math.max(totalMeaningful, 1));
+    for (const r of ct2.data || []) upgrade(`${r.tmdb_type}:${r.tmdb_id}`, "exact_alias", 0.92, Math.max(totalMeaningful, 1));
+
+    // prefix compact — typeahead-only to keep full-mode strict.
+    if (mode === "typeahead") {
+      const [cp1, cp2] = await Promise.all([
+        sb.from("content_titles").select("tmdb_id, tmdb_type").like("normalized_compact", `${compactQuery}%`).limit(40),
+        sb.from("content_title_aliases").select("tmdb_id, tmdb_type").like("normalized_compact", `${compactQuery}%`).limit(60),
+      ]);
+      for (const r of cp1.data || []) upgrade(`${r.tmdb_type}:${r.tmdb_id}`, "prefix", 0.82, Math.max(totalMeaningful, 1));
+      for (const r of cp2.data || []) upgrade(`${r.tmdb_type}:${r.tmdb_id}`, "prefix", 0.78, Math.max(totalMeaningful, 1));
+    }
   }
 
   // 3) per-token trgm on title + alias

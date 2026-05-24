@@ -6,6 +6,10 @@
 // back to the existing DB-first / TMDB path without breaking the response.
 
 import { normalizeTitle } from "./normalize.ts";
+import {
+  getExactAliasesForTitle,
+  getFranchiseAliasesForTitle,
+} from "./aliases.ts";
 
 export interface MeiliConfig {
   host: string;
@@ -63,11 +67,22 @@ async function meiliRequest<T = any>(
 }
 
 // ─── Index settings ──────────────────────────────────────────────────────
+// Attribute order is the ranking priority for the "attribute" ranking rule:
+// matches in earlier-listed attributes beat matches in later ones.
+//
+//   title              — canonical TR/primary title
+//   exact_aliases      — same content in another language (Money Heist ↔ La Casa de Papel)
+//   original_title     — TMDB original-language title
+//   normalized_title   — diacritic-stripped form (yan yana / yanyana)
+//   franchise_aliases  — franchise siblings; only fires if user actually queried the franchise
+//   loose_aliases      — DB-collected aliases (countries, regional spellings)
 const SEARCHABLE_ATTRIBUTES = [
   "title",
-  "aliases",
+  "exact_aliases",
   "original_title",
   "normalized_title",
+  "franchise_aliases",
+  "loose_aliases",
 ];
 
 const FILTERABLE_ATTRIBUTES = [
@@ -78,9 +93,16 @@ const FILTERABLE_ATTRIBUTES = [
   "origin",
   "genres",
   "year",
+  "franchise_key",
+  "is_franchise_main",
+  "is_spin_off",
 ];
 
+// search_rank: lower = more canonical. Used as a tie-breaker BEFORE
+// vote_count so a low-vote main entry still outranks a popular spin-off
+// when both are equally relevant on words/typo/proximity.
 const SORTABLE_ATTRIBUTES = [
+  "search_rank",
   "vote_count",
   "vote_average",
   "popularity",
@@ -100,12 +122,30 @@ const STOP_WORDS = [
 const RANKING_RULES = [
   "words",
   "typo",
+  "search_rank:asc",
   "proximity",
   "attribute",
   "sort",
   "exactness",
   "vote_count:desc",
 ];
+
+// Very conservative phrase-level synonyms: only cross-language equivalents
+// that are unambiguous. Alias fields do most of the work; synonyms here are
+// safety net for short queries where attribute priority alone may not fire.
+const SYNONYMS: Record<string, string[]> = {
+  "money heist": ["la casa de papel"],
+  "la casa de papel": ["money heist"],
+  "ice age": ["buz devri"],
+  "buz devri": ["ice age"],
+  "shrek": ["şrek"],
+  "şrek": ["shrek"],
+  "lord of the rings": ["yüzüklerin efendisi"],
+  "yüzüklerin efendisi": ["lord of the rings"],
+  "fast and furious": ["hızlı ve öfkeli"],
+  "hızlı ve öfkeli": ["fast and furious"],
+};
+
 
 /**
  * Create the index (idempotent) and push settings. Safe to call repeatedly.
@@ -140,8 +180,7 @@ export async function ensureIndexSettings(cfg: MeiliConfig = getMeiliConfig()) {
       sortableAttributes: SORTABLE_ATTRIBUTES,
       stopWords: STOP_WORDS,
       rankingRules: RANKING_RULES,
-      // synonyms intentionally minimal — alias coverage lives in document.aliases[]
-      synonyms: {},
+      synonyms: SYNONYMS,
     }),
     cfg,
   });
@@ -152,13 +191,18 @@ export async function ensureIndexSettings(cfg: MeiliConfig = getMeiliConfig()) {
 // ─── Document shape ──────────────────────────────────────────────────────
 
 export interface MeiliDoc {
-  id: string;           // `${tmdb_type}:${tmdb_id}` — primary key
+  id: string;
   tmdb_id: number;
   type: "movie" | "tv";
   content_kind: string | null;
   title: string;
   original_title: string | null;
   normalized_title: string;
+  // Categorized alias buckets — see SEARCHABLE_ATTRIBUTES for priority.
+  exact_aliases: string[];
+  franchise_aliases: string[];
+  loose_aliases: string[];
+  // Kept for back-compat / debugging; not in searchableAttributes anymore.
   aliases: string[];
   year: number | null;
   poster: string | null;
@@ -168,11 +212,16 @@ export interface MeiliDoc {
   popularity: number;
   genres: string[];
   origin: "yerli" | "yabanci" | "bilinmiyor";
-  providers: string[];        // slug list
-  provider_names: string[];   // display names
+  providers: string[];
+  provider_names: string[];
   available_in_tr: boolean;
   confidence: number;
-  updated_at: number;         // unix seconds (sortable)
+  updated_at: number;
+  // Franchise / ranking helpers
+  franchise_key: string | null;
+  is_franchise_main: boolean;
+  is_spin_off: boolean;
+  search_rank: number; // lower = more canonical
 }
 
 interface RawTitle {
@@ -262,14 +311,93 @@ export function mapContentTitleToMeiliDocument(
   const popularity = Number(meta.popularity) || 0;
   const updatedAtMs = title.updated_at ? new Date(title.updated_at).getTime() : Date.now();
 
+  // ── Categorize aliases ────────────────────────────────────────────────
+  const titleText = title.title || "";
+  const exactAliases = getExactAliasesForTitle(titleText);
+  const franchiseMatch = getFranchiseAliasesForTitle(titleText);
+  const franchiseAliases = franchiseMatch?.variants ?? [];
+  const franchiseKey = franchiseMatch?.franchiseKey ?? null;
+
+  // Move any DB aliases that are also exact/franchise variants OUT of loose.
+  const promoted = new Set<string>(
+    [...exactAliases, ...franchiseAliases].map((s) => normalizeTitle(s)),
+  );
+  const looseAliases = aliasList.filter((a) => !promoted.has(normalizeTitle(a)));
+
+  // ── Franchise / spin-off detection ───────────────────────────────────
+  const normT = normalizeTitle(titleText);
+  const collection = meta?.belongs_to_collection || null;
+  const collectionName: string = collection?.name || "";
+  const normCollection = normalizeTitle(collectionName);
+
+  const kind = (title.content_kind || "").toLowerCase();
+  const runtime = Number(meta?.runtime) || 0;
+  const isShortOrSpecial =
+    kind.includes("special") ||
+    kind.includes("short") ||
+    (title.tmdb_type === "tv" && runtime > 0 && runtime < 30);
+
+  // Spin-off heuristics: "Presents:" marker, explicit subtitle markers, or
+  // belongs to a different collection than the franchise root.
+  const hasPresents = /\bpresents\b\s*[:\-]/i.test(titleText);
+  const subtitleAfterColon = /:\s*\S/.test(titleText);
+  const isInFranchise = !!franchiseKey || !!collectionName;
+
+  // Heuristic main-entry: title equals franchise/collection name, or title is
+  // first numeric in franchise (e.g. "Buz Devri", "Ice Age", "Hızlı ve Öfkeli").
+  const looksLikeMain =
+    isInFranchise &&
+    !hasPresents &&
+    !isShortOrSpecial &&
+    (
+      // Exact match to franchise key
+      (franchiseKey && normT === franchiseKey) ||
+      // Title equals collection root name
+      (normCollection && normT === normCollection) ||
+      // Title starts with collection/franchise name + " " + a numeric ordinal
+      (franchiseKey && new RegExp(`^${franchiseKey}\\s+\\d`).test(normT)) ||
+      (normCollection && new RegExp(`^${normCollection}\\s+\\d`).test(normT))
+    );
+
+  const isSpinOff =
+    hasPresents ||
+    isShortOrSpecial ||
+    // Inside a franchise, but title doesn't look like a numbered main entry
+    // and contains a non-trivial subtitle (Hobbs & Shaw, Egg-Scapade etc.).
+    (isInFranchise && !looksLikeMain && subtitleAfterColon);
+
+  // search_rank: lower = more canonical.
+  //   pure franchise main (title == franchise key): 30
+  //   numbered franchise sequel:                    50
+  //   collection root match:                        40
+  //   standalone (not in franchise):               100
+  //   other in-franchise (not main, no spin-off):  120
+  //   spin-off / special / "Presents:":            300
+  let searchRank = 100;
+  const isPureMain =
+    !!franchiseKey && normT === franchiseKey ||
+    (!!normCollection && normT === normCollection);
+  const isNumberedSequel =
+    !isPureMain && (
+      (!!franchiseKey && new RegExp(`^${franchiseKey}\\s+\\d`).test(normT)) ||
+      (!!normCollection && new RegExp(`^${normCollection}\\s+\\d`).test(normT))
+    );
+  if (isInFranchise) searchRank = 120;
+  if (isNumberedSequel) searchRank = 50;
+  if (isPureMain) searchRank = 30;
+  if (isSpinOff) searchRank = 300;
+
   return {
     id: sanitizeMeiliId(title.tmdb_type, title.tmdb_id),
     tmdb_id: Number(title.tmdb_id),
     type: title.tmdb_type,
     content_kind: title.content_kind,
-    title: title.title || "",
+    title: titleText,
     original_title: title.original_title || null,
-    normalized_title: title.normalized_title || normalizeTitle(title.title || ""),
+    normalized_title: title.normalized_title || normalizeTitle(titleText),
+    exact_aliases: exactAliases,
+    franchise_aliases: franchiseAliases,
+    loose_aliases: looseAliases,
     aliases: aliasList,
     year: title.release_year,
     poster: tmdbImg(title.poster_path, "w500"),
@@ -284,6 +412,10 @@ export function mapContentTitleToMeiliDocument(
     available_in_tr: providerSlugs.length > 0,
     confidence: Math.round(Math.max(maxConf, 0) * 100),
     updated_at: Math.floor(updatedAtMs / 1000),
+    franchise_key: franchiseKey,
+    is_franchise_main: looksLikeMain,
+    is_spin_off: isSpinOff,
+    search_rank: searchRank,
   };
 }
 

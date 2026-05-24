@@ -444,6 +444,60 @@ serve(async (req) => {
       });
     }
 
+    // Loop many batches in one HTTP call until deadline or done.
+    if (action === "full_sync_run") {
+      const maxMs = Math.min(Number(body?.max_ms) || 90000, 110000);
+      const deadline = Date.now() + maxMs;
+      let totalPushed = 0, totalFailed = 0, batches = 0;
+      let lastTaskError: string | null = null;
+      let stop = false;
+      while (Date.now() < deadline && !stop) {
+        const state = (await loadState(sb, cfg.indexName)) || { current_offset: 0, indexed_count: 0, failed_count: 0 };
+        const offset = Number(state.current_offset) || 0;
+        let batch;
+        try {
+          batch = await collectBatch(sb, offset, batchSize);
+        } catch (e: any) {
+          lastTaskError = `collect failed: ${e?.message || String(e)}`;
+          await upsertState(sb, cfg.indexName, { last_error: lastTaskError });
+          break;
+        }
+        let pushed = 0, failed = 0;
+        if (batch.docs.length > 0) {
+          try {
+            const r = await upsertDocuments(batch.docs, cfg);
+            const t = await waitForTask(r.taskUid, cfg, { timeoutMs: 20000 });
+            if (t.status === "succeeded") pushed = r.count;
+            else { failed = batch.docs.length; lastTaskError = `task ${t.status}: ${t.error?.code || ""} ${t.error?.message || ""}`.trim(); }
+          } catch (e: any) {
+            failed = batch.docs.length;
+            lastTaskError = `meili upsert failed: ${e?.message || String(e)}`;
+          }
+        }
+        const nextOffset = offset + batch.titleCount;
+        await upsertState(sb, cfg.indexName, {
+          current_offset: nextOffset,
+          indexed_count: (state.indexed_count || 0) + pushed,
+          failed_count: (state.failed_count || 0) + failed,
+          has_more: batch.hasMore,
+          last_synced_at: new Date().toISOString(),
+          last_error: lastTaskError,
+        });
+        totalPushed += pushed; totalFailed += failed; batches++;
+        if (!batch.hasMore) stop = true;
+      }
+      const finalState = await loadState(sb, cfg.indexName);
+      return json({
+        ok: !lastTaskError,
+        action: "full_sync_run",
+        batches,
+        docs_pushed: totalPushed,
+        docs_failed: totalFailed,
+        last_error: lastTaskError,
+        state: finalState,
+      });
+    }
+
     return json({ ok: false, error: `unknown action: ${action}` }, 400);
   } catch (e: any) {
     console.error("[hapl-sync-search-index] fatal:", e);

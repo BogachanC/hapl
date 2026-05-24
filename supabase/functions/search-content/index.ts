@@ -628,7 +628,7 @@ serve(async (req) => {
 
     const writeTelemetry = (
       results: ContentResultOut[],
-      source: "db" | "tmdb_fallback" | "mixed" | "cache",
+      source: "db" | "tmdb_fallback" | "mixed" | "cache" | "meili",
     ) => {
       bg(
         sb.from("search_events").insert({
@@ -654,6 +654,28 @@ serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
+    // 1b. Meili branch (feature-flagged via MEILI_ENABLED).
+    // Returns null when disabled / not configured / errored → silent fallback
+    // to the legacy DB-first + TMDB pipeline below.
+    const meiliBranch = await tryMeiliBranch(sb, trimmedQuery, providerSlug, categoryFilter);
+    if (meiliBranch && meiliBranch.strong) {
+      const out = meiliBranch.results;
+      console.log(
+        `[hapl] meili-first hit: query="${trimmedQuery}" count=${out.length} mode=${mode} → skipping DB/TMDB`,
+      );
+      writeToCache(sb, key, out).catch((e) => console.error("cache write:", e));
+      writeTelemetry(out, "meili");
+      return new Response(JSON.stringify({ results: out, cached: false, source: "meili", mode }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    if (meiliBranch) {
+      console.log(
+        `[hapl] meili weak (${meiliBranch.reason}) count=${meiliBranch.results.length} → fallback to DB/TMDB`,
+      );
+    }
+
 
     // 2. DB-FIRST search
     const dbHit = await searchTitlesInDb(sb, trimmedQuery, {

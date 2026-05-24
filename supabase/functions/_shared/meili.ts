@@ -307,6 +307,50 @@ export async function deleteDocuments(
   return { taskUid: out?.taskUid ?? -1, count: ids.length };
 }
 
+// Wait for a Meili task to finish. Returns { status, error } where status is
+// one of: succeeded | failed | canceled | enqueued | processing (last two
+// mean we timed out polling). Polls every `intervalMs` up to `timeoutMs`.
+export async function waitForTask(
+  taskUid: number | string,
+  cfg: MeiliConfig = getMeiliConfig(),
+  opts: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<{ status: string; error: any | null; raw: any }> {
+  if (taskUid === -1 || taskUid === undefined || taskUid === null) {
+    return { status: "succeeded", error: null, raw: null };
+  }
+  const timeoutMs = opts.timeoutMs ?? 15000;
+  const intervalMs = opts.intervalMs ?? 400;
+  const deadline = Date.now() + timeoutMs;
+  let last: any = null;
+  while (Date.now() < deadline) {
+    last = await meiliRequest<any>(`/tasks/${taskUid}`, { method: "GET", cfg });
+    const s = last?.status;
+    if (s === "succeeded" || s === "failed" || s === "canceled") {
+      return { status: s, error: last?.error ?? null, raw: last };
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return { status: last?.status || "processing", error: last?.error ?? null, raw: last };
+}
+
+export async function deleteIndex(
+  cfg: MeiliConfig = getMeiliConfig(),
+): Promise<{ taskUid: number | string }> {
+  if (!isMeiliConfigured(cfg)) throw new Error("Meilisearch not configured");
+  try {
+    const out = await meiliRequest<any>(`/indexes/${cfg.indexName}`, {
+      method: "DELETE",
+      cfg,
+    });
+    return { taskUid: out?.taskUid ?? -1 };
+  } catch (e: any) {
+    if (String(e?.message || "").includes("index_not_found")) {
+      return { taskUid: -1 };
+    }
+    throw e;
+  }
+}
+
 // ─── Search (used by Stage 2; safe to ship now) ──────────────────────────
 
 export interface MeiliSearchOpts {

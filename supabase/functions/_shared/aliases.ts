@@ -1,20 +1,22 @@
-// Multilingual title & franchise aliases — small, hand-curated, extensible.
+// Multilingual title & franchise aliases — hand-curated, extensible.
 //
-// Two use-cases:
-// 1) Multilingual fallback for high-value cross-language titles where TMDB's
-//    localized index misses hits (e.g. "Money Heist" ↔ "La Casa de Papel").
-// 2) Franchise variant expansion: when a user types one spelling/language,
-//    also probe the equivalent so series films come through (e.g. "Şrek" ↔ "Shrek",
-//    "Buz Devri" ↔ "Ice Age", "Behzat" ↔ "Behzat Ç").
+// Two distinct group types now, used by both search-time lookups and
+// Meili indexing to put canonical equivalences ahead of franchise siblings:
 //
-// This is NOT a translation dictionary. Add entries only with strong justification.
+//   EXACT_GROUPS      — same content, different languages/spellings.
+//                       Example: "Money Heist" ↔ "La Casa de Papel".
+//                       At index time, members get each other in `exact_aliases`.
+//
+//   FRANCHISE_GROUPS  — same franchise/series with multiple entries, possibly
+//                       cross-language. Example: "Fast and Furious" ↔
+//                       "Hızlı ve Öfkeli". Anything whose title CONTAINS a
+//                       member gets the variants in `franchise_aliases`.
+//
+// Lookups are bidirectional and case/diacritic-insensitive.
 
 import { normalizeTitle } from "./normalize.ts";
 
-// Each group is a set of equivalent titles / franchise spellings.
-// Lookups are bidirectional: any member maps to all the others.
-const ALIAS_GROUPS: string[][] = [
-  // Cross-language full-title aliases
+const EXACT_GROUPS: string[][] = [
   ["Money Heist", "La Casa de Papel", "La Casa De Papel"],
   ["Spirited Away", "Ruhların Kaçışı", "Sen to Chihiro no Kamikakushi"],
   ["The Office", "Ofis"],
@@ -23,28 +25,32 @@ const ALIAS_GROUPS: string[][] = [
   ["Squid Game", "Kalamar Oyunu"],
   ["Dark", "Karanlık"],
   ["The Crown", "Taç"],
+  ["The Dark Knight", "Kara Şövalye"],
+  ["Iron Man", "Demir Adam"],
+];
 
-  // Franchise / spelling variants — each variant probes a different TMDB index
-  // and surfaces the full series (e.g. Shrek 2, Buz Devri 3...).
+const FRANCHISE_GROUPS: string[][] = [
   ["Şrek", "Shrek"],
   ["Buz Devri", "Ice Age"],
   ["Behzat", "Behzat Ç"],
-  ["Yüzüklerin Efendisi", "The Lord of the Rings"],
+  ["Yüzüklerin Efendisi", "The Lord of the Rings", "Lord of the Rings"],
   ["Hobbit", "The Hobbit"],
+  ["Harry Potter"],
   ["Açlık Oyunları", "The Hunger Games"],
   ["Karayip Korsanları", "Pirates of the Caribbean"],
   ["Yıldız Savaşları", "Star Wars"],
   ["Örümcek Adam", "Spider-Man", "Spiderman"],
-  ["Demir Adam", "Iron Man"],
-  ["Kara Şövalye", "The Dark Knight"],
-  ["Hızlı ve Öfkeli", "Fast and Furious", "The Fast and the Furious"],
+  ["Hızlı ve Öfkeli", "Fast and Furious", "Fast & Furious", "The Fast and the Furious"],
   ["Görevimiz Tehlike", "Mission Impossible", "Mission: Impossible"],
 ];
 
-// Build normalized → array<original alternates> index once.
+const ALL_GROUPS = [...EXACT_GROUPS, ...FRANCHISE_GROUPS];
+
+// Build normalized → array<original alternates> index once (combined, for
+// backward-compatible getAliases).
 const INDEX: Map<string, string[]> = (() => {
   const m = new Map<string, string[]>();
-  for (const group of ALIAS_GROUPS) {
+  for (const group of ALL_GROUPS) {
     for (const member of group) {
       const key = normalizeTitle(member);
       if (!key) continue;
@@ -56,12 +62,9 @@ const INDEX: Map<string, string[]> = (() => {
   return m;
 })();
 
-// Normalized → full set of normalized members of the same group (incl. self).
-// Used by search ranking to detect when a candidate's title belongs to the
-// same alias/franchise group the user actually queried.
 const GROUP_MEMBERS: Map<string, Set<string>> = (() => {
   const m = new Map<string, Set<string>>();
-  for (const group of ALIAS_GROUPS) {
+  for (const group of ALL_GROUPS) {
     const normSet = new Set<string>();
     for (const member of group) {
       const k = normalizeTitle(member);
@@ -73,26 +76,73 @@ const GROUP_MEMBERS: Map<string, Set<string>> = (() => {
   return m;
 })();
 
-/**
- * Return alternate titles for a query, or [] if none known.
- * Matching is normalized (case/diacritic-insensitive).
- */
 export function getAliases(query: string): string[] {
   const key = normalizeTitle(query);
   return INDEX.get(key) || [];
 }
 
-/**
- * If `query` belongs to a known alias/franchise group, return the set of
- * ALL normalized member titles of that group (including the query itself).
- * Otherwise null.
- *
- * Lets the search ranker recognise when a candidate result is the canonical
- * group member (e.g. "La Casa de Papel") versus a same-name-but-unrelated
- * sibling (e.g. "Coin Heist" / "Darphane Soygunu") that only got pulled in
- * via token overlap on the alias variant query.
- */
 export function getAliasGroupMembers(query: string): Set<string> | null {
   const key = normalizeTitle(query);
   return GROUP_MEMBERS.get(key) || null;
+}
+
+// ─── New: categorized alias lookups for indexing ─────────────────────────
+
+/**
+ * Exact equivalents for a given title. Used when the title is a 1:1 match
+ * to a member of an EXACT_GROUP.
+ */
+export function getExactAliasesForTitle(title: string): string[] {
+  const key = normalizeTitle(title);
+  if (!key) return [];
+  for (const group of EXACT_GROUPS) {
+    const norms = group.map(normalizeTitle);
+    if (norms.includes(key)) {
+      return group.filter((m) => normalizeTitle(m) !== key);
+    }
+  }
+  return [];
+}
+
+/**
+ * Franchise variants whose normalized form is contained in the title's
+ * normalized form. Returns all OTHER members of the matched franchise group.
+ *
+ * Example: title "Ice Age: The Meltdown" matches the "ice age" franchise key
+ * and returns ["Buz Devri"]. Title "Buz Devri 3" matches the "buz devri" key
+ * and returns ["Ice Age"].
+ */
+export function getFranchiseAliasesForTitle(title: string): {
+  variants: string[];
+  franchiseKey: string;
+} | null {
+  const norm = normalizeTitle(title);
+  if (!norm) return null;
+  const tokens = new Set(norm.split(/\s+/).filter(Boolean));
+  for (const group of FRANCHISE_GROUPS) {
+    for (const member of group) {
+      const memberNorm = normalizeTitle(member);
+      if (!memberNorm) continue;
+      // Match if title starts with member key, contains it as a whole-phrase
+      // substring (with word boundaries via space delimiters), or the member
+      // is a single token contained in the title's tokens.
+      const memberTokens = memberNorm.split(/\s+/);
+      const isPhrase =
+        norm === memberNorm ||
+        norm.startsWith(memberNorm + " ") ||
+        norm.endsWith(" " + memberNorm) ||
+        norm.includes(" " + memberNorm + " ") ||
+        norm.includes(memberNorm + ":") ||
+        norm.includes(memberNorm + " ");
+      const isTokenMatch =
+        memberTokens.length === 1 && tokens.has(memberNorm);
+      if (isPhrase || isTokenMatch) {
+        const variants = group
+          .filter((m) => normalizeTitle(m) !== memberNorm)
+          .filter((m) => !!normalizeTitle(m));
+        return { variants, franchiseKey: normalizeTitle(group[0]) };
+      }
+    }
+  }
+  return null;
 }

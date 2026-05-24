@@ -23,6 +23,12 @@ import {
   type ProviderRow,
 } from "../_shared/providers.ts";
 import { searchTitlesInDb, type DbContentResultOut } from "../_shared/db-search.ts";
+import {
+  getMeiliConfig,
+  isMeiliConfigured,
+  searchMeili,
+  type MeiliDoc,
+} from "../_shared/meili.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",

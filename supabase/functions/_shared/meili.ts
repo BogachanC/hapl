@@ -27,6 +27,14 @@ export function isMeiliConfigured(cfg: MeiliConfig = getMeiliConfig()): boolean 
   return Boolean(cfg.host && cfg.masterKey);
 }
 
+// Meilisearch document IDs only accept [a-zA-Z0-9_-]. Build a canonical id
+// from tmdb_type + tmdb_id and strip anything else to be safe.
+export function sanitizeMeiliId(type: string, tmdbId: number | string): string {
+  const t = String(type || "").replace(/[^a-zA-Z0-9_-]/g, "");
+  const i = String(tmdbId ?? "").replace(/[^a-zA-Z0-9_-]/g, "");
+  return `${t}_${i}`;
+}
+
 async function meiliRequest<T = any>(
   path: string,
   init: RequestInit & { cfg?: MeiliConfig } = {},
@@ -255,7 +263,7 @@ export function mapContentTitleToMeiliDocument(
   const updatedAtMs = title.updated_at ? new Date(title.updated_at).getTime() : Date.now();
 
   return {
-    id: `${title.tmdb_type}:${title.tmdb_id}`,
+    id: sanitizeMeiliId(title.tmdb_type, title.tmdb_id),
     tmdb_id: Number(title.tmdb_id),
     type: title.tmdb_type,
     content_kind: title.content_kind,
@@ -305,6 +313,50 @@ export async function deleteDocuments(
     { method: "POST", body: JSON.stringify(ids), cfg },
   );
   return { taskUid: out?.taskUid ?? -1, count: ids.length };
+}
+
+// Wait for a Meili task to finish. Returns { status, error } where status is
+// one of: succeeded | failed | canceled | enqueued | processing (last two
+// mean we timed out polling). Polls every `intervalMs` up to `timeoutMs`.
+export async function waitForTask(
+  taskUid: number | string,
+  cfg: MeiliConfig = getMeiliConfig(),
+  opts: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<{ status: string; error: any | null; raw: any }> {
+  if (taskUid === -1 || taskUid === undefined || taskUid === null) {
+    return { status: "succeeded", error: null, raw: null };
+  }
+  const timeoutMs = opts.timeoutMs ?? 15000;
+  const intervalMs = opts.intervalMs ?? 400;
+  const deadline = Date.now() + timeoutMs;
+  let last: any = null;
+  while (Date.now() < deadline) {
+    last = await meiliRequest<any>(`/tasks/${taskUid}`, { method: "GET", cfg });
+    const s = last?.status;
+    if (s === "succeeded" || s === "failed" || s === "canceled") {
+      return { status: s, error: last?.error ?? null, raw: last };
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return { status: last?.status || "processing", error: last?.error ?? null, raw: last };
+}
+
+export async function deleteIndex(
+  cfg: MeiliConfig = getMeiliConfig(),
+): Promise<{ taskUid: number | string }> {
+  if (!isMeiliConfigured(cfg)) throw new Error("Meilisearch not configured");
+  try {
+    const out = await meiliRequest<any>(`/indexes/${cfg.indexName}`, {
+      method: "DELETE",
+      cfg,
+    });
+    return { taskUid: out?.taskUid ?? -1 };
+  } catch (e: any) {
+    if (String(e?.message || "").includes("index_not_found")) {
+      return { taskUid: -1 };
+    }
+    throw e;
+  }
 }
 
 // ─── Search (used by Stage 2; safe to ship now) ──────────────────────────

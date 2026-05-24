@@ -165,6 +165,21 @@ export function SearchIndexPanel() {
         </Button>
         <Button
           size="sm"
+          variant="destructive"
+          onClick={() => {
+            if (confirm('Meili index silinip yeniden kurulacak ve sync sayaçları sıfırlanacak. Devam?')) {
+              call('reset_index', 'Index reset');
+            }
+          }}
+          disabled={!!busy || !configured}
+          className="gap-1 h-8 text-xs"
+        >
+          {busy === 'reset_index' ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCw className="h-3 w-3" />}
+          Reset Index
+        </Button>
+
+        <Button
+          size="sm"
           onClick={() => call('full_sync_start', 'İlk batch sync')}
           disabled={!!busy || !configured}
           className="gap-1 h-8 text-xs"

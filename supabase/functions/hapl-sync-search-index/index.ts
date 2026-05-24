@@ -20,12 +20,14 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import {
+  deleteIndex,
   ensureIndexSettings,
   getMeiliConfig,
   isMeiliConfigured,
   mapContentTitleToMeiliDocument,
   searchMeili,
   upsertDocuments,
+  waitForTask,
   type MeiliDoc,
 } from "../_shared/meili.ts";
 
@@ -35,8 +37,10 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-hapl-sync-token, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const DEFAULT_BATCH_SIZE = 200;
-const MAX_BATCH_SIZE = 500;
+// Keep batches small — PostgREST `.in()` URL length silently caps results
+// above ~150 UUIDs which makes whole batches return 0 docs without errors.
+const DEFAULT_BATCH_SIZE = 100;
+const MAX_BATCH_SIZE = 200;
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -324,6 +328,27 @@ serve(async (req) => {
 
 
 
+    if (action === "reset_index") {
+      // Delete the Meili index, recreate settings, reset our state row.
+      const del = await deleteIndex(cfg);
+      let delTask: any = null;
+      if (del.taskUid !== -1) {
+        delTask = await waitForTask(del.taskUid, cfg, { timeoutMs: 20000 });
+      }
+      const setup = await ensureIndexSettings(cfg);
+      const state = await upsertState(sb, cfg.indexName, {
+        indexed_count: 0,
+        failed_count: 0,
+        current_offset: 0,
+        total_titles: 0,
+        has_more: false,
+        last_error: null,
+        last_synced_at: null,
+        meta: { last_reset_at: new Date().toISOString() },
+      });
+      return json({ ok: true, deleted_task: delTask, setup, state });
+    }
+
     if (action === "setup_index") {
       const r = await ensureIndexSettings(cfg);
       const state = await upsertState(sb, cfg.indexName, {
@@ -367,19 +392,30 @@ serve(async (req) => {
 
       let pushed = 0;
       let failed = 0;
+      let taskInfo: any = null;
+      let taskError: string | null = null;
       if (batch.docs.length > 0) {
         try {
           const r = await upsertDocuments(batch.docs, cfg);
-          pushed = r.count;
+          // 202 is NOT success — poll the task to confirm Meili actually
+          // ingested the documents. invalid_document_id and friends only
+          // surface here.
+          const t = await waitForTask(r.taskUid, cfg, { timeoutMs: 20000 });
+          taskInfo = { taskUid: r.taskUid, status: t.status };
+          if (t.status === "succeeded") {
+            pushed = r.count;
+          } else if (t.status === "failed" || t.status === "canceled") {
+            failed = batch.docs.length;
+            taskError = `meili task ${t.status}: ${t.error?.code || ""} ${t.error?.message || ""}`.trim();
+          } else {
+            // still processing after timeout — count as failed for this run
+            // (don't double-advance), but record the task uid for inspection.
+            failed = batch.docs.length;
+            taskError = `meili task still ${t.status} after timeout (uid=${r.taskUid})`;
+          }
         } catch (e: any) {
           failed = batch.docs.length;
-          await upsertState(sb, cfg.indexName, {
-            last_error: `meili upsert failed: ${e?.message || String(e)}`,
-            current_offset: offset + batch.titleCount, // still advance — avoid infinite stuck batch
-            failed_count: (state.failed_count || 0) + failed,
-            has_more: batch.hasMore,
-          });
-          return json({ ok: false, error: e?.message || String(e) }, 500);
+          taskError = `meili upsert failed: ${e?.message || String(e)}`;
         }
       }
 
@@ -390,19 +426,75 @@ serve(async (req) => {
         failed_count: (state.failed_count || 0) + failed,
         has_more: batch.hasMore,
         last_synced_at: new Date().toISOString(),
-        last_error: null,
+        last_error: taskError,
       });
 
       return json({
-        ok: true,
+        ok: !taskError,
         action: "full_sync_continue",
         batch_size: batchSize,
         titles_scanned: batch.titleCount,
         docs_pushed: pushed,
         docs_failed: failed,
+        task: taskInfo,
+        task_error: taskError,
         next_offset: nextOffset,
         has_more: batch.hasMore,
         state: newState,
+      });
+    }
+
+    // Loop many batches in one HTTP call until deadline or done.
+    if (action === "full_sync_run") {
+      const maxMs = Math.min(Number(body?.max_ms) || 90000, 110000);
+      const deadline = Date.now() + maxMs;
+      let totalPushed = 0, totalFailed = 0, batches = 0;
+      let lastTaskError: string | null = null;
+      let stop = false;
+      while (Date.now() < deadline && !stop) {
+        const state = (await loadState(sb, cfg.indexName)) || { current_offset: 0, indexed_count: 0, failed_count: 0 };
+        const offset = Number(state.current_offset) || 0;
+        let batch;
+        try {
+          batch = await collectBatch(sb, offset, batchSize);
+        } catch (e: any) {
+          lastTaskError = `collect failed: ${e?.message || String(e)}`;
+          await upsertState(sb, cfg.indexName, { last_error: lastTaskError });
+          break;
+        }
+        let pushed = 0, failed = 0;
+        if (batch.docs.length > 0) {
+          try {
+            const r = await upsertDocuments(batch.docs, cfg);
+            const t = await waitForTask(r.taskUid, cfg, { timeoutMs: 20000 });
+            if (t.status === "succeeded") pushed = r.count;
+            else { failed = batch.docs.length; lastTaskError = `task ${t.status}: ${t.error?.code || ""} ${t.error?.message || ""}`.trim(); }
+          } catch (e: any) {
+            failed = batch.docs.length;
+            lastTaskError = `meili upsert failed: ${e?.message || String(e)}`;
+          }
+        }
+        const nextOffset = offset + batch.titleCount;
+        await upsertState(sb, cfg.indexName, {
+          current_offset: nextOffset,
+          indexed_count: (state.indexed_count || 0) + pushed,
+          failed_count: (state.failed_count || 0) + failed,
+          has_more: batch.hasMore,
+          last_synced_at: new Date().toISOString(),
+          last_error: lastTaskError,
+        });
+        totalPushed += pushed; totalFailed += failed; batches++;
+        if (!batch.hasMore) stop = true;
+      }
+      const finalState = await loadState(sb, cfg.indexName);
+      return json({
+        ok: !lastTaskError,
+        action: "full_sync_run",
+        batches,
+        docs_pushed: totalPushed,
+        docs_failed: totalFailed,
+        last_error: lastTaskError,
+        state: finalState,
       });
     }
 

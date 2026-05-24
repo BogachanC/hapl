@@ -428,6 +428,7 @@ export function mapContentTitleToMeiliDocument(
     franchise_key: franchiseKey,
     is_franchise_main: looksLikeMain,
     is_spin_off: isSpinOff,
+    is_special: isSpecial,
     search_rank: searchRank,
   };
 }

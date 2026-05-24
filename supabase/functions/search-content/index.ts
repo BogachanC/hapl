@@ -568,6 +568,42 @@ async function tryMeiliBranch(
 
   if (hits.length === 0) return { results: [], strong: false, reason: "empty" };
 
+  // ── Exact-match re-rank (generic) ──────────────────────────────────────
+  // If the user typed something that EXACTLY equals a hit's title,
+  // original_title, or one of its exact_aliases (after normalization),
+  // that hit must outrank merely-related results — even if Meili's
+  // text-relevance put a localized translation (e.g. "Sıkı Dostlar" for
+  // "friends") above the canonical match (the original "Friends" series).
+  // We assign a tier (0 = exact, 1 = otherwise) and stable-sort.
+  const nq = normalizeTitle(q);
+  const exactTier = (h: MeiliDoc): number => {
+    const t = normalizeTitle(h.title || "");
+    const ot = normalizeTitle(h.original_title || "");
+    if (t === nq || ot === nq) return 0;
+    const exAliases = Array.isArray(h.exact_aliases) ? h.exact_aliases : [];
+    for (const a of exAliases) {
+      if (normalizeTitle(a) === nq) return 0;
+    }
+    return 1;
+  };
+  const indexed = hits.map((h, i) => ({ h, i, tier: exactTier(h) }));
+
+  indexed.sort((a, b) => {
+    if (a.tier !== b.tier) return a.tier - b.tier;
+    // Within the exact-match tier, prefer the more popular canonical entry
+    // (e.g. Friends 1994 series over the obscure 1990 movie that happens to
+    // share the original_title "Friends"). Outside tier 0, keep Meili order.
+    if (a.tier === 0) {
+      const va = a.h.vote_count ?? 0;
+      const vb = b.h.vote_count ?? 0;
+      if (va !== vb) return vb - va;
+    }
+    return a.i - b.i;
+  });
+  hits = indexed.map((x) => x.h);
+
+
+
   const providerSlugMap = await loadProviderSlugMap(sb);
   const results = hits.map((h) => meiliHitToContentResult(h, providerSlugMap));
 
@@ -578,6 +614,7 @@ async function tryMeiliBranch(
   const strong = topHasProviders && topRankOk && enoughResults;
   const reason = !topHasProviders
     ? "top_no_providers"
+
     : !topRankOk
       ? "top_spinoff"
       : !enoughResults

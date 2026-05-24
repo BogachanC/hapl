@@ -24,6 +24,7 @@ import {
   getMeiliConfig,
   isMeiliConfigured,
   mapContentTitleToMeiliDocument,
+  searchMeili,
   upsertDocuments,
   type MeiliDoc,
 } from "../_shared/meili.ts";
@@ -263,6 +264,65 @@ serve(async (req) => {
         error: "Meilisearch not configured (MEILI_HOST / MEILI_MASTER_KEY missing)",
       }, 400);
     }
+
+    // Read-only: Meili index stats (document count etc.)
+    if (action === "meili_stats") {
+      const host = cfg.host;
+      const [statsRes, indexesRes, tasksRes] = await Promise.all([
+        fetch(`${host}/indexes/${cfg.indexName}/stats`, {
+          headers: { Authorization: `Bearer ${cfg.masterKey}` },
+        }),
+        fetch(`${host}/indexes?limit=50`, {
+          headers: { Authorization: `Bearer ${cfg.masterKey}` },
+        }),
+        fetch(`${host}/tasks?indexUids=${cfg.indexName}&limit=5`, {
+          headers: { Authorization: `Bearer ${cfg.masterKey}` },
+        }),
+      ]);
+      const stats = await statsRes.json().catch(() => ({}));
+      const indexes = await indexesRes.json().catch(() => ({}));
+      const tasks = await tasksRes.json().catch(() => ({}));
+      return json({
+        ok: statsRes.ok,
+        host_suffix: host.slice(-40),
+        index_name: cfg.indexName,
+        stats,
+        indexes,
+        recent_tasks: tasks,
+      });
+    }
+
+    // Read-only: golden query test against Meili
+    if (action === "golden_test") {
+      const queries: string[] = Array.isArray(body?.queries) && body.queries.length > 0
+        ? body.queries.map((q: any) => String(q))
+        : [
+          "fast and furious", "hızlı ve öfkeli", "şrek", "shrek",
+          "buz devri", "ice age", "money heist", "la casa de papel",
+          "friends", "dark", "the office", "game of thrones",
+          "behzat", "the wire", "mentalist", "harry potter",
+          "lord of the rings", "yan yana", "yanyana",
+        ];
+      const results: any[] = [];
+      for (const q of queries) {
+        try {
+          const r = await searchMeili({ q, limit: 3 }, cfg);
+          results.push({
+            q,
+            total: r.estimatedTotalHits,
+            top: r.hits.map((h) => ({
+              id: h.id, title: h.title, year: h.year,
+              providers: h.providers, type: h.type,
+            })),
+          });
+        } catch (e: any) {
+          results.push({ q, error: e?.message || String(e) });
+        }
+      }
+      return json({ ok: true, results });
+    }
+
+
 
     if (action === "setup_index") {
       const r = await ensureIndexSettings(cfg);

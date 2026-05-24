@@ -88,9 +88,11 @@ export function SearchIndexPanel() {
   const s = status?.state;
   const configured = !!status?.meili_configured;
   const enabled = !!status?.meili_enabled;
-  const pct = s && s.total_titles > 0
-    ? Math.min(100, Math.round((s.current_offset / s.total_titles) * 100))
-    : 0;
+  // total_titles is a pre-scan estimate; once sync completes current_offset
+  // can exceed it. Use the max so the bar never inverts or exceeds 100%.
+  const denom = s ? Math.max(s.total_titles || 0, s.current_offset || 0, s.indexed_count || 0) : 0;
+  const numer = s ? (s.has_more ? (s.current_offset || 0) : (s.indexed_count || 0)) : 0;
+  const pct = denom > 0 ? Math.min(100, Math.round((numer / denom) * 100)) : 0;
 
   return (
     <div className="rounded-xl border border-border/40 bg-card/40 p-4 space-y-4">
@@ -125,7 +127,7 @@ export function SearchIndexPanel() {
         <div className="rounded-md border border-border/40 p-2">
           <div className="text-muted-foreground">İlerleme</div>
           <div className="text-foreground">
-            {s ? `${s.current_offset} / ${s.total_titles} (%${pct})` : '—'}
+            {s ? `${s.indexed_count} indexed / ~${denom} scanned (%${pct})${s.has_more ? '' : ' ✓'}` : '—'}
           </div>
         </div>
         <div className="rounded-md border border-border/40 p-2">

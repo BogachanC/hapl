@@ -9,6 +9,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { CatalogSeedPanel } from '@/components/CatalogSeedPanel';
+import { SearchIndexPanel } from '@/components/SearchIndexPanel';
 
 
 type TmdbResult = {
@@ -171,6 +172,8 @@ const AdminPanel = () => {
       <main className="container max-w-lg mx-auto px-4 py-4 space-y-4">
 
         <CatalogSeedPanel />
+
+        <SearchIndexPanel />
 
         {/* Content Type Toggle */}
         <div className="flex gap-2">

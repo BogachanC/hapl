@@ -594,8 +594,20 @@ async function tryMeiliBranch(
   } else {
     console.log(`[hapl] meili re-rank: nq="${nq}" no-exact-match. top3 titles=${indexed.slice(0,3).map(x=>`${x.h.title}|orig=${x.h.original_title}`).join(" ; ")}`);
   }
-  indexed.sort((a, b) => a.tier - b.tier || a.i - b.i);
+  indexed.sort((a, b) => {
+    if (a.tier !== b.tier) return a.tier - b.tier;
+    // Within the exact-match tier, prefer the more popular canonical entry
+    // (e.g. Friends 1994 series over the obscure 1990 movie that happens to
+    // share the original_title "Friends"). Outside tier 0, keep Meili order.
+    if (a.tier === 0) {
+      const va = a.h.vote_count ?? 0;
+      const vb = b.h.vote_count ?? 0;
+      if (va !== vb) return vb - va;
+    }
+    return a.i - b.i;
+  });
   hits = indexed.map((x) => x.h);
+
 
 
   const providerSlugMap = await loadProviderSlugMap(sb);

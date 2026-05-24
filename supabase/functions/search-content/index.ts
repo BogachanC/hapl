@@ -456,6 +456,137 @@ function mergeRanked(
   return out.sort((x, y) => y.score - x.score);
 }
 
+// ─── Meili helpers (Stage 2, feature-flagged) ────────────────────────────
+//
+// MEILI_ENABLED=false (default) → these are never called and the existing
+// DB-first + TMDB fallback pipeline runs unchanged.
+//
+// MEILI_ENABLED=true → search-content first asks Meili. Strong results are
+// returned directly (source="meili"). On any error, weak result, or missing
+// provider info, we fall through to the legacy pipeline silently.
+
+type ProviderLite = { id: string; slug: string; display_name: string };
+
+async function loadProviderSlugMap(sb: any): Promise<Map<string, ProviderLite>> {
+  const { data } = await sb
+    .from("streaming_providers")
+    .select("id, slug, display_name")
+    .eq("is_active", true);
+  const map = new Map<string, ProviderLite>();
+  for (const p of data || []) map.set(p.slug, p as ProviderLite);
+  return map;
+}
+
+function meiliHitToContentResult(
+  hit: MeiliDoc,
+  providerSlugMap: Map<string, ProviderLite>,
+): ContentResultOut {
+  const platforms: PlatformOut[] = [];
+  const seen = new Set<string>();
+  const slugs = Array.isArray(hit.providers) ? hit.providers : [];
+  for (let i = 0; i < slugs.length; i++) {
+    const slug = slugs[i];
+    if (!slug || seen.has(slug)) continue;
+    seen.add(slug);
+    const p = providerSlugMap.get(slug);
+    const displayName = p?.display_name || (hit.provider_names?.[i] ?? slug);
+    platforms.push({
+      name: displayName,
+      logo: null,
+      // Meili doesn't store availability_type per provider; default to
+      // subscription (matches DB-first behaviour for stream availability,
+      // which is the common case for indexed titles).
+      type: "subscription",
+      link: null,
+      source: "tmdb",
+      slug,
+    });
+  }
+  return {
+    id: hit.tmdb_id,
+    type: hit.type,
+    title: hit.title,
+    year: hit.year ?? null,
+    overview: "",
+    poster: hit.poster ?? null,
+    backdrop: hit.backdrop ?? null,
+    imdb_rating: hit.vote_average ? Math.round(hit.vote_average * 10) / 10 : null,
+    vote_count: hit.vote_count ?? 0,
+    genres: Array.isArray(hit.genres) ? hit.genres : [],
+    platforms,
+    tmdb_url: `https://www.themoviedb.org/${hit.type}/${hit.tmdb_id}`,
+    available_in_tr: platforms.length > 0,
+    confidence: typeof hit.confidence === "number" ? hit.confidence : 80,
+    origin: hit.origin || "bilinmiyor",
+  };
+}
+
+interface MeiliBranchResult {
+  results: ContentResultOut[];
+  strong: boolean;
+  reason: string;
+}
+
+async function tryMeiliBranch(
+  sb: any,
+  query: string,
+  providerSlug: string | null,
+  categoryFilter: string | null,
+): Promise<MeiliBranchResult | null> {
+  const cfg = getMeiliConfig();
+  if (!cfg.enabled || !isMeiliConfigured(cfg)) return null;
+  const q = query.trim();
+  if (q.length < 2) return { results: [], strong: false, reason: "query_too_short" };
+
+  const filters: string[] = ["available_in_tr = true"];
+  if (providerSlug) filters.push(`providers = "${providerSlug.replace(/"/g, '\\"')}"`);
+  if (categoryFilter && categoryFilter !== "all") {
+    if (categoryFilter === "series" || categoryFilter === "tv") {
+      filters.push(`(content_kind = "series" OR content_kind = "reality")`);
+    } else if (categoryFilter === "movie") {
+      filters.push(`content_kind = "movie"`);
+    } else if (categoryFilter === "documentary") {
+      filters.push(`content_kind = "documentary"`);
+    }
+  }
+
+  let hits: MeiliDoc[] = [];
+  try {
+    const t0 = Date.now();
+    const res = await searchMeili(
+      { q, limit: 20, filter: filters.join(" AND ") },
+      cfg,
+    );
+    hits = res.hits || [];
+    console.log(
+      `[hapl] meili: query="${q}" hits=${hits.length} ms=${res.processingTimeMs} total=${Date.now() - t0}`,
+    );
+  } catch (e: any) {
+    console.error("[hapl] meili error → fallback:", e?.message || e);
+    return null;
+  }
+
+  if (hits.length === 0) return { results: [], strong: false, reason: "empty" };
+
+  const providerSlugMap = await loadProviderSlugMap(sb);
+  const results = hits.map((h) => meiliHitToContentResult(h, providerSlugMap));
+
+  const top = hits[0];
+  const topHasProviders = (top.providers?.length ?? 0) > 0;
+  const topRankOk = (top.search_rank ?? 999) <= 200; // not a hard spin-off/special
+  const enoughResults = hits.length >= 3;
+  const strong = topHasProviders && topRankOk && enoughResults;
+  const reason = !topHasProviders
+    ? "top_no_providers"
+    : !topRankOk
+      ? "top_spinoff"
+      : !enoughResults
+        ? "too_few_results"
+        : "ok";
+
+  return { results, strong, reason };
+}
+
 // ─── handler ──────────────────────────────────────────────────────────────
 serve(async (req) => {
   if (req.method === "OPTIONS") {

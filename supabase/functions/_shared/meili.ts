@@ -311,14 +311,81 @@ export function mapContentTitleToMeiliDocument(
   const popularity = Number(meta.popularity) || 0;
   const updatedAtMs = title.updated_at ? new Date(title.updated_at).getTime() : Date.now();
 
+  // ── Categorize aliases ────────────────────────────────────────────────
+  const titleText = title.title || "";
+  const exactAliases = getExactAliasesForTitle(titleText);
+  const franchiseMatch = getFranchiseAliasesForTitle(titleText);
+  const franchiseAliases = franchiseMatch?.variants ?? [];
+  const franchiseKey = franchiseMatch?.franchiseKey ?? null;
+
+  // Move any DB aliases that are also exact/franchise variants OUT of loose.
+  const promoted = new Set<string>(
+    [...exactAliases, ...franchiseAliases].map((s) => normalizeTitle(s)),
+  );
+  const looseAliases = aliasList.filter((a) => !promoted.has(normalizeTitle(a)));
+
+  // ── Franchise / spin-off detection ───────────────────────────────────
+  const normT = normalizeTitle(titleText);
+  const collection = meta?.belongs_to_collection || null;
+  const collectionName: string = collection?.name || "";
+  const normCollection = normalizeTitle(collectionName);
+
+  const kind = (title.content_kind || "").toLowerCase();
+  const runtime = Number(meta?.runtime) || 0;
+  const isShortOrSpecial =
+    kind.includes("special") ||
+    kind.includes("short") ||
+    (title.tmdb_type === "tv" && runtime > 0 && runtime < 30);
+
+  // Spin-off heuristics: "Presents:" marker, explicit subtitle markers, or
+  // belongs to a different collection than the franchise root.
+  const hasPresents = /\bpresents\b\s*[:\-]/i.test(titleText);
+  const subtitleAfterColon = /:\s*\S/.test(titleText);
+  const isInFranchise = !!franchiseKey || !!collectionName;
+
+  // Heuristic main-entry: title equals franchise/collection name, or title is
+  // first numeric in franchise (e.g. "Buz Devri", "Ice Age", "Hızlı ve Öfkeli").
+  const looksLikeMain =
+    isInFranchise &&
+    !hasPresents &&
+    !isShortOrSpecial &&
+    (
+      // Exact match to franchise key
+      (franchiseKey && normT === franchiseKey) ||
+      // Title equals collection root name
+      (normCollection && normT === normCollection) ||
+      // Title starts with collection/franchise name + " " + a numeric ordinal
+      (franchiseKey && new RegExp(`^${franchiseKey}\\s+\\d`).test(normT)) ||
+      (normCollection && new RegExp(`^${normCollection}\\s+\\d`).test(normT))
+    );
+
+  const isSpinOff =
+    hasPresents ||
+    isShortOrSpecial ||
+    // Inside a franchise, but title doesn't look like a numbered main entry
+    // and contains a non-trivial subtitle (Hobbs & Shaw, Egg-Scapade etc.).
+    (isInFranchise && !looksLikeMain && subtitleAfterColon);
+
+  // search_rank: lower = more canonical.
+  //   standalone:        100
+  //   franchise main:     50
+  //   franchise sibling: 100 (neutral)
+  //   spin-off/special:  300
+  let searchRank = 100;
+  if (looksLikeMain) searchRank = 50;
+  if (isSpinOff) searchRank = 300;
+
   return {
     id: sanitizeMeiliId(title.tmdb_type, title.tmdb_id),
     tmdb_id: Number(title.tmdb_id),
     type: title.tmdb_type,
     content_kind: title.content_kind,
-    title: title.title || "",
+    title: titleText,
     original_title: title.original_title || null,
-    normalized_title: title.normalized_title || normalizeTitle(title.title || ""),
+    normalized_title: title.normalized_title || normalizeTitle(titleText),
+    exact_aliases: exactAliases,
+    franchise_aliases: franchiseAliases,
+    loose_aliases: looseAliases,
     aliases: aliasList,
     year: title.release_year,
     poster: tmdbImg(title.poster_path, "w500"),
@@ -333,6 +400,10 @@ export function mapContentTitleToMeiliDocument(
     available_in_tr: providerSlugs.length > 0,
     confidence: Math.round(Math.max(maxConf, 0) * 100),
     updated_at: Math.floor(updatedAtMs / 1000),
+    franchise_key: franchiseKey,
+    is_franchise_main: looksLikeMain,
+    is_spin_off: isSpinOff,
+    search_rank: searchRank,
   };
 }
 

@@ -127,7 +127,7 @@ export function SearchIndexPanel() {
         <div className="rounded-md border border-border/40 p-2">
           <div className="text-muted-foreground">İlerleme</div>
           <div className="text-foreground">
-            {s ? `${s.current_offset} / ${s.total_titles} (%${pct})` : '—'}
+            {s ? `${s.indexed_count} indexed / ~${denom} scanned (%${pct})${s.has_more ? '' : ' ✓'}` : '—'}
           </div>
         </div>
         <div className="rounded-md border border-border/40 p-2">

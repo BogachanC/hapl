@@ -191,13 +191,18 @@ export async function ensureIndexSettings(cfg: MeiliConfig = getMeiliConfig()) {
 // ─── Document shape ──────────────────────────────────────────────────────
 
 export interface MeiliDoc {
-  id: string;           // `${tmdb_type}:${tmdb_id}` — primary key
+  id: string;
   tmdb_id: number;
   type: "movie" | "tv";
   content_kind: string | null;
   title: string;
   original_title: string | null;
   normalized_title: string;
+  // Categorized alias buckets — see SEARCHABLE_ATTRIBUTES for priority.
+  exact_aliases: string[];
+  franchise_aliases: string[];
+  loose_aliases: string[];
+  // Kept for back-compat / debugging; not in searchableAttributes anymore.
   aliases: string[];
   year: number | null;
   poster: string | null;
@@ -207,11 +212,16 @@ export interface MeiliDoc {
   popularity: number;
   genres: string[];
   origin: "yerli" | "yabanci" | "bilinmiyor";
-  providers: string[];        // slug list
-  provider_names: string[];   // display names
+  providers: string[];
+  provider_names: string[];
   available_in_tr: boolean;
   confidence: number;
-  updated_at: number;         // unix seconds (sortable)
+  updated_at: number;
+  // Franchise / ranking helpers
+  franchise_key: string | null;
+  is_franchise_main: boolean;
+  is_spin_off: boolean;
+  search_rank: number; // lower = more canonical
 }
 
 interface RawTitle {

@@ -6,6 +6,10 @@
 // back to the existing DB-first / TMDB path without breaking the response.
 
 import { normalizeTitle } from "./normalize.ts";
+import {
+  getExactAliasesForTitle,
+  getFranchiseAliasesForTitle,
+} from "./aliases.ts";
 
 export interface MeiliConfig {
   host: string;

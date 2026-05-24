@@ -255,7 +255,7 @@ export function mapContentTitleToMeiliDocument(
   const updatedAtMs = title.updated_at ? new Date(title.updated_at).getTime() : Date.now();
 
   return {
-    id: `${title.tmdb_type}:${title.tmdb_id}`,
+    id: sanitizeMeiliId(title.tmdb_type, title.tmdb_id),
     tmdb_id: Number(title.tmdb_id),
     type: title.tmdb_type,
     content_kind: title.content_kind,

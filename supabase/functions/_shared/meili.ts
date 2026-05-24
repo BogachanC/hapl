@@ -96,6 +96,7 @@ const FILTERABLE_ATTRIBUTES = [
   "franchise_key",
   "is_franchise_main",
   "is_spin_off",
+  "is_special",
 ];
 
 // search_rank: lower = more canonical. Used as a tie-breaker BEFORE

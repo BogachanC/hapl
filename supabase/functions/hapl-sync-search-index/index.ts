@@ -306,12 +306,6 @@ serve(async (req) => {
     }
 
 
-    if (!isMeiliConfigured(cfg)) {
-      return json({
-        ok: false,
-        error: "Meilisearch not configured (MEILI_HOST / MEILI_MASTER_KEY missing)",
-      }, 400);
-    }
 
     if (action === "setup_index") {
       const r = await ensureIndexSettings(cfg);

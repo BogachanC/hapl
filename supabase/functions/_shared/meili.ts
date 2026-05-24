@@ -180,8 +180,7 @@ export async function ensureIndexSettings(cfg: MeiliConfig = getMeiliConfig()) {
       sortableAttributes: SORTABLE_ATTRIBUTES,
       stopWords: STOP_WORDS,
       rankingRules: RANKING_RULES,
-      // synonyms intentionally minimal — alias coverage lives in document.aliases[]
-      synonyms: {},
+      synonyms: SYNONYMS,
     }),
     cfg,
   });

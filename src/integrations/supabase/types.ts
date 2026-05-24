@@ -607,6 +607,51 @@ export type Database = {
         }
         Relationships: []
       }
+      search_index_state: {
+        Row: {
+          created_at: string
+          current_offset: number
+          failed_count: number
+          has_more: boolean
+          id: string
+          index_name: string
+          indexed_count: number
+          last_error: string | null
+          last_synced_at: string | null
+          meta: Json
+          total_titles: number
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          current_offset?: number
+          failed_count?: number
+          has_more?: boolean
+          id?: string
+          index_name: string
+          indexed_count?: number
+          last_error?: string | null
+          last_synced_at?: string | null
+          meta?: Json
+          total_titles?: number
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          current_offset?: number
+          failed_count?: number
+          has_more?: boolean
+          id?: string
+          index_name?: string
+          indexed_count?: number
+          last_error?: string | null
+          last_synced_at?: string | null
+          meta?: Json
+          total_titles?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       streaming_providers: {
         Row: {
           created_at: string

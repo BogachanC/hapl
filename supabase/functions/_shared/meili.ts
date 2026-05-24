@@ -222,6 +222,7 @@ export interface MeiliDoc {
   franchise_key: string | null;
   is_franchise_main: boolean;
   is_spin_off: boolean;
+  is_special: boolean;
   search_rank: number; // lower = more canonical
 }
 

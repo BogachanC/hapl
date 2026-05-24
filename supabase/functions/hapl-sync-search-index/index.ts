@@ -268,11 +268,28 @@ serve(async (req) => {
     // Read-only: Meili index stats (document count etc.)
     if (action === "meili_stats") {
       const host = cfg.host;
-      const res = await fetch(`${host}/indexes/${cfg.indexName}/stats`, {
-        headers: { Authorization: `Bearer ${cfg.masterKey}` },
+      const [statsRes, indexesRes, tasksRes] = await Promise.all([
+        fetch(`${host}/indexes/${cfg.indexName}/stats`, {
+          headers: { Authorization: `Bearer ${cfg.masterKey}` },
+        }),
+        fetch(`${host}/indexes?limit=50`, {
+          headers: { Authorization: `Bearer ${cfg.masterKey}` },
+        }),
+        fetch(`${host}/tasks?indexUids=${cfg.indexName}&limit=5`, {
+          headers: { Authorization: `Bearer ${cfg.masterKey}` },
+        }),
+      ]);
+      const stats = await statsRes.json().catch(() => ({}));
+      const indexes = await indexesRes.json().catch(() => ({}));
+      const tasks = await tasksRes.json().catch(() => ({}));
+      return json({
+        ok: statsRes.ok,
+        host_suffix: host.slice(-40),
+        index_name: cfg.indexName,
+        stats,
+        indexes,
+        recent_tasks: tasks,
       });
-      const data = await res.json().catch(() => ({}));
-      return json({ ok: res.ok, status: res.status, stats: data });
     }
 
     // Read-only: golden query test against Meili

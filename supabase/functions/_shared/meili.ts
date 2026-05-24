@@ -27,6 +27,14 @@ export function isMeiliConfigured(cfg: MeiliConfig = getMeiliConfig()): boolean 
   return Boolean(cfg.host && cfg.masterKey);
 }
 
+// Meilisearch document IDs only accept [a-zA-Z0-9_-]. Build a canonical id
+// from tmdb_type + tmdb_id and strip anything else to be safe.
+export function sanitizeMeiliId(type: string, tmdbId: number | string): string {
+  const t = String(type || "").replace(/[^a-zA-Z0-9_-]/g, "");
+  const i = String(tmdbId ?? "").replace(/[^a-zA-Z0-9_-]/g, "");
+  return `${t}_${i}`;
+}
+
 async function meiliRequest<T = any>(
   path: string,
   init: RequestInit & { cfg?: MeiliConfig } = {},

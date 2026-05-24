@@ -367,12 +367,24 @@ export function mapContentTitleToMeiliDocument(
     (isInFranchise && !looksLikeMain && subtitleAfterColon);
 
   // search_rank: lower = more canonical.
-  //   standalone:        100
-  //   franchise main:     50
-  //   franchise sibling: 100 (neutral)
-  //   spin-off/special:  300
+  //   pure franchise main (title == franchise key): 30
+  //   numbered franchise sequel:                    50
+  //   collection root match:                        40
+  //   standalone (not in franchise):               100
+  //   other in-franchise (not main, no spin-off):  120
+  //   spin-off / special / "Presents:":            300
   let searchRank = 100;
-  if (looksLikeMain) searchRank = 50;
+  const isPureMain =
+    !!franchiseKey && normT === franchiseKey ||
+    (!!normCollection && normT === normCollection);
+  const isNumberedSequel =
+    !isPureMain && (
+      (!!franchiseKey && new RegExp(`^${franchiseKey}\\s+\\d`).test(normT)) ||
+      (!!normCollection && new RegExp(`^${normCollection}\\s+\\d`).test(normT))
+    );
+  if (isInFranchise) searchRank = 120;
+  if (isNumberedSequel) searchRank = 50;
+  if (isPureMain) searchRank = 30;
   if (isSpinOff) searchRank = 300;
 
   return {

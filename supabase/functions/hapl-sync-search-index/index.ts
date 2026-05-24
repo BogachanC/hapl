@@ -24,6 +24,7 @@ import {
   getMeiliConfig,
   isMeiliConfigured,
   mapContentTitleToMeiliDocument,
+  searchMeili,
   upsertDocuments,
   type MeiliDoc,
 } from "../_shared/meili.ts";

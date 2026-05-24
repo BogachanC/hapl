@@ -122,11 +122,11 @@ const STOP_WORDS = [
 const RANKING_RULES = [
   "words",
   "typo",
+  "search_rank:asc",
   "proximity",
   "attribute",
   "sort",
   "exactness",
-  "search_rank:asc",
   "vote_count:desc",
 ];
 

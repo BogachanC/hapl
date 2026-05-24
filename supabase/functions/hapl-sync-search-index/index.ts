@@ -37,8 +37,10 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-hapl-sync-token, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const DEFAULT_BATCH_SIZE = 200;
-const MAX_BATCH_SIZE = 500;
+// Keep batches small — PostgREST `.in()` URL length silently caps results
+// above ~150 UUIDs which makes whole batches return 0 docs without errors.
+const DEFAULT_BATCH_SIZE = 100;
+const MAX_BATCH_SIZE = 200;
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {

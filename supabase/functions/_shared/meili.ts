@@ -67,11 +67,22 @@ async function meiliRequest<T = any>(
 }
 
 // ─── Index settings ──────────────────────────────────────────────────────
+// Attribute order is the ranking priority for the "attribute" ranking rule:
+// matches in earlier-listed attributes beat matches in later ones.
+//
+//   title              — canonical TR/primary title
+//   exact_aliases      — same content in another language (Money Heist ↔ La Casa de Papel)
+//   original_title     — TMDB original-language title
+//   normalized_title   — diacritic-stripped form (yan yana / yanyana)
+//   franchise_aliases  — franchise siblings; only fires if user actually queried the franchise
+//   loose_aliases      — DB-collected aliases (countries, regional spellings)
 const SEARCHABLE_ATTRIBUTES = [
   "title",
-  "aliases",
+  "exact_aliases",
   "original_title",
   "normalized_title",
+  "franchise_aliases",
+  "loose_aliases",
 ];
 
 const FILTERABLE_ATTRIBUTES = [
@@ -82,9 +93,16 @@ const FILTERABLE_ATTRIBUTES = [
   "origin",
   "genres",
   "year",
+  "franchise_key",
+  "is_franchise_main",
+  "is_spin_off",
 ];
 
+// search_rank: lower = more canonical. Used as a tie-breaker BEFORE
+// vote_count so a low-vote main entry still outranks a popular spin-off
+// when both are equally relevant on words/typo/proximity.
 const SORTABLE_ATTRIBUTES = [
+  "search_rank",
   "vote_count",
   "vote_average",
   "popularity",
@@ -108,8 +126,26 @@ const RANKING_RULES = [
   "attribute",
   "sort",
   "exactness",
+  "search_rank:asc",
   "vote_count:desc",
 ];
+
+// Very conservative phrase-level synonyms: only cross-language equivalents
+// that are unambiguous. Alias fields do most of the work; synonyms here are
+// safety net for short queries where attribute priority alone may not fire.
+const SYNONYMS: Record<string, string[]> = {
+  "money heist": ["la casa de papel"],
+  "la casa de papel": ["money heist"],
+  "ice age": ["buz devri"],
+  "buz devri": ["ice age"],
+  "shrek": ["şrek"],
+  "şrek": ["shrek"],
+  "lord of the rings": ["yüzüklerin efendisi"],
+  "yüzüklerin efendisi": ["lord of the rings"],
+  "fast and furious": ["hızlı ve öfkeli"],
+  "hızlı ve öfkeli": ["fast and furious"],
+};
+
 
 /**
  * Create the index (idempotent) and push settings. Safe to call repeatedly.

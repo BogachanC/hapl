@@ -343,12 +343,23 @@ export function mapContentTitleToMeiliDocument(
   const subtitleAfterColon = /:\s*\S/.test(titleText);
   const isInFranchise = !!franchiseKey || !!collectionName;
 
+  // Special/anniversary/reunion/documentary/behind-the-scenes/making-of markers.
+  // Matches EN + TR (both diacritic and ASCII forms). Used to demote
+  // reunion / anniversary / making-of style content in franchise queries.
+  const SPECIAL_RE =
+    /(\banniversary\b|\breunion\b|\bspecial\b|\bdocumentary\b|\bbehind\b|\bmaking[\s-]of\b|\breturn\s+to\b|\byıldönümü\b|\byildonumu\b|\bbuluşma\b|\bbulusma\b|\bözel\b|\bozel\b|\bbelgesel\b|\bkamera\s+arkası\b|\bkamera\s+arkasi\b|\bdönüş\b|\bdonus\b)/i;
+  const haystack = `${titleText} ${title.original_title || ""}`;
+  const genresLower = (title.genres || []).map((g) => String(g).toLowerCase());
+  const isDocumentaryGenre = genresLower.some((g) => g.includes("documentary") || g.includes("belgesel"));
+  const isSpecial = SPECIAL_RE.test(haystack) || isDocumentaryGenre;
+
   // Heuristic main-entry: title equals franchise/collection name, or title is
   // first numeric in franchise (e.g. "Buz Devri", "Ice Age", "Hızlı ve Öfkeli").
   const looksLikeMain =
     isInFranchise &&
     !hasPresents &&
     !isShortOrSpecial &&
+    !isSpecial &&
     (
       // Exact match to franchise key
       (franchiseKey && normT === franchiseKey) ||
@@ -362,17 +373,17 @@ export function mapContentTitleToMeiliDocument(
   const isSpinOff =
     hasPresents ||
     isShortOrSpecial ||
+    isSpecial ||
     // Inside a franchise, but title doesn't look like a numbered main entry
     // and contains a non-trivial subtitle (Hobbs & Shaw, Egg-Scapade etc.).
     (isInFranchise && !looksLikeMain && subtitleAfterColon);
 
   // search_rank: lower = more canonical.
-  //   pure franchise main (title == franchise key): 30
+  //   pure franchise main:                          30
   //   numbered franchise sequel:                    50
-  //   collection root match:                        40
   //   standalone (not in franchise):               100
   //   other in-franchise (not main, no spin-off):  120
-  //   spin-off / special / "Presents:":            300
+  //   spin-off / special / reunion / anniversary / documentary: 300
   let searchRank = 100;
   const isPureMain =
     !!franchiseKey && normT === franchiseKey ||
@@ -385,7 +396,7 @@ export function mapContentTitleToMeiliDocument(
   if (isInFranchise) searchRank = 120;
   if (isNumberedSequel) searchRank = 50;
   if (isPureMain) searchRank = 30;
-  if (isSpinOff) searchRank = 300;
+  if (isSpinOff || isSpecial) searchRank = 300;
 
   return {
     id: sanitizeMeiliId(title.tmdb_type, title.tmdb_id),

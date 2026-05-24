@@ -587,8 +587,16 @@ async function tryMeiliBranch(
     return 1;
   };
   const indexed = hits.map((h, i) => ({ h, i, tier: exactTier(h) }));
+  const exactCount = indexed.filter((x) => x.tier === 0).length;
+  if (exactCount > 0) {
+    const sample = indexed.filter((x) => x.tier === 0).slice(0, 3).map((x) => `${x.h.title}|orig=${x.h.original_title}`).join(" ; ");
+    console.log(`[hapl] meili re-rank: nq="${nq}" exactCount=${exactCount} sample=${sample}`);
+  } else {
+    console.log(`[hapl] meili re-rank: nq="${nq}" no-exact-match. top3 titles=${indexed.slice(0,3).map(x=>`${x.h.title}|orig=${x.h.original_title}`).join(" ; ")}`);
+  }
   indexed.sort((a, b) => a.tier - b.tier || a.i - b.i);
   hits = indexed.map((x) => x.h);
+
 
   const providerSlugMap = await loadProviderSlugMap(sb);
   const results = hits.map((h) => meiliHitToContentResult(h, providerSlugMap));

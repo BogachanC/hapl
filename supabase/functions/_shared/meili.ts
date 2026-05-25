@@ -499,10 +499,13 @@ export function mapContentTitleToMeiliDocument(
     content_kind: title.content_kind,
     title: titleText,
     original_title: rawOriginal || null,
+    english_title: englishTitle,
     localized_title_tr: localizedTitleTr,
+    original_script_title: originalScriptTitle,
     normalized_title: normalizeTitle(titleText),
 
     exact_aliases: exactAliases,
+    article_stripped_aliases: articleStrippedAliases,
     franchise_aliases: franchiseAliases,
     loose_aliases: looseAliases,
     aliases: aliasList,

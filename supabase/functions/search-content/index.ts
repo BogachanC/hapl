@@ -411,7 +411,10 @@ async function enrichCandidate(
   return {
     id: cand.id,
     type: cand.media_type,
-    title: detail.title,
+    // Display = canonical/original. Türkçe translated `detail.title`
+    // (from tr-TR locale) is intentionally NOT shown on the card.
+    title: (detail.original_title || detail.title || "").trim() || detail.title,
+
     year: cand.release_year,
     overview: detail.overview,
     poster: tmdbImage(detail.poster_path, "w500"),

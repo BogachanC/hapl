@@ -11,6 +11,7 @@
 import { normalizeTitle, meaningfulTokens, splitQueryTokens, compactNormalizeTitle } from "./normalize.ts";
 import { getAliasGroupMembers } from "./aliases.ts";
 import { tmdbImage } from "./tmdb.ts";
+import { pickDisplayTitle, type AliasMeta } from "./display-title.ts";
 
 export interface DbPlatformOut {
   id?: number;

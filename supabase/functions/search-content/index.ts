@@ -568,39 +568,46 @@ async function tryMeiliBranch(
 
   if (hits.length === 0) return { results: [], strong: false, reason: "empty" };
 
-  // ── Exact-match re-rank (generic) ──────────────────────────────────────
-  // If the user typed something that EXACTLY equals a hit's title,
-  // original_title, or one of its exact_aliases (after normalization),
-  // that hit must outrank merely-related results — even if Meili's
-  // text-relevance put a localized translation (e.g. "Sıkı Dostlar" for
-  // "friends") above the canonical match (the original "Friends" series).
-  // We assign a tier (0 = exact, 1 = otherwise) and stable-sort.
+  // ── Tiered re-rank (collision-safe) ────────────────────────────────────
+  // Türkçe localized titles are stored as DOCUMENT-SPECIFIC exact_aliases
+  // (never as global synonyms). To prevent "Sıkı Dostlar" (TR title shared
+  // by GoodFellas + Friends) from polluting an exact original-title query
+  // like "goodfellas", we split match strength into three tiers:
+  //
+  //   Tier 0 — query exactly equals title (canonical) or original_title
+  //   Tier 1 — query exactly equals one of exact_aliases / localized_title_tr
+  //   Tier 2 — everything else (text relevance, franchise, loose aliases)
+  //
+  // Tie-breaks inside each tier: search_rank asc (canonical first),
+  // then vote_count desc (popular canonical wins on duplicates), then
+  // original Meili order.
   const nq = normalizeTitle(q);
-  const exactTier = (h: MeiliDoc): number => {
+  const tierOf = (h: MeiliDoc): number => {
     const t = normalizeTitle(h.title || "");
     const ot = normalizeTitle(h.original_title || "");
-    if (t === nq || ot === nq) return 0;
+    if ((t && t === nq) || (ot && ot === nq)) return 0;
     const exAliases = Array.isArray(h.exact_aliases) ? h.exact_aliases : [];
     for (const a of exAliases) {
-      if (normalizeTitle(a) === nq) return 0;
+      if (normalizeTitle(a) === nq) return 1;
     }
-    return 1;
+    const loc = normalizeTitle((h as any).localized_title_tr || "");
+    if (loc && loc === nq) return 1;
+    return 2;
   };
-  const indexed = hits.map((h, i) => ({ h, i, tier: exactTier(h) }));
+  const indexed = hits.map((h, i) => ({ h, i, tier: tierOf(h) }));
 
   indexed.sort((a, b) => {
     if (a.tier !== b.tier) return a.tier - b.tier;
-    // Within the exact-match tier, prefer the more popular canonical entry
-    // (e.g. Friends 1994 series over the obscure 1990 movie that happens to
-    // share the original_title "Friends"). Outside tier 0, keep Meili order.
-    if (a.tier === 0) {
-      const va = a.h.vote_count ?? 0;
-      const vb = b.h.vote_count ?? 0;
-      if (va !== vb) return vb - va;
-    }
+    const ra = a.h.search_rank ?? 999;
+    const rb = b.h.search_rank ?? 999;
+    if (ra !== rb) return ra - rb;
+    const va = a.h.vote_count ?? 0;
+    const vb = b.h.vote_count ?? 0;
+    if (va !== vb) return vb - va;
     return a.i - b.i;
   });
   hits = indexed.map((x) => x.h);
+
 
 
 

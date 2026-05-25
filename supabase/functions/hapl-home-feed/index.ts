@@ -313,12 +313,15 @@ serve(async (req: Request) => {
             ? "yabanci"
             : "bilinmiyor";
 
+      const aliasMetas = aliasMetaByKey.get(`${t.tmdb_type}:${t.tmdb_id}`) || [];
+      const picked = pickDisplayTitle(t.title || "", t.original_title || null, aliasMetas, meta);
+      const displayTitle = picked.display || t.title;
       items.push({
         id: t.id,
         tmdb_id: t.tmdb_id,
         type: t.tmdb_type,
         content_kind: t.content_kind,
-        title: (t.original_title || "").trim() || t.title,
+        title: displayTitle,
         year: t.release_year,
         overview: t.overview || "",
         poster: t.poster_path ? `${TMDB_IMG}/w500${t.poster_path}` : null,

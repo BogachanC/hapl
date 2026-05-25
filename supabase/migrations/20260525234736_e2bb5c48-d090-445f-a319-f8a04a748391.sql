@@ -1,0 +1,1 @@
+DELETE FROM public.catalog_dirty_titles WHERE reason = 'availability_changed' AND metadata = '{"a":1}'::jsonb;

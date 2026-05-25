@@ -86,9 +86,12 @@ async function meiliRequest<T = any>(
 //   loose_aliases      — DB-collected aliases (countries, regional spellings)
 const SEARCHABLE_ATTRIBUTES = [
   "title",
+  "english_title",
   "exact_aliases",
+  "article_stripped_aliases",
   "localized_title_tr",
   "original_title",
+  "original_script_title",
   "normalized_title",
   "franchise_aliases",
   "loose_aliases",

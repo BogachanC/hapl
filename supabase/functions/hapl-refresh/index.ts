@@ -66,24 +66,107 @@ function deriveContentKind(
   return "series";
 }
 
+// Returns the set of provider_ids that have an ACTIVE manual override for this title.
+// Active = effective_from <= now AND (effective_until IS NULL OR effective_until > now).
+// While active, automatic TMDB refresh MUST NOT flip availability for these providers
+// (neither insert/upsert tmdb rows nor expire existing ones).
+async function loadActiveOverrideProviders(
+  sb: any,
+  titleId: string,
+): Promise<Set<string>> {
+  const nowIso = new Date().toISOString();
+  const { data, error } = await sb
+    .from("manual_availability_overrides")
+    .select("provider_id, action, effective_from, effective_until")
+    .eq("title_id", titleId)
+    .lte("effective_from", nowIso);
+  if (error || !data) return new Set();
+  const out = new Set<string>();
+  for (const r of data as any[]) {
+    if (r.effective_until && r.effective_until <= nowIso) continue;
+    if (r.provider_id) out.add(r.provider_id);
+  }
+  return out;
+}
+
+async function enqueueDirty(
+  sb: any,
+  titleId: string,
+  reason: string,
+  metadata: Record<string, unknown>,
+): Promise<void> {
+  // Idempotent: a partial unique index on (title_id) WHERE processed_at IS NULL
+  // guarantees a single OPEN row per title. On conflict, merge reason+metadata
+  // into the existing open row and bump enqueued_at.
+  const insertRes = await sb.from("catalog_dirty_titles").insert({
+    title_id: titleId,
+    reason,
+    metadata,
+  });
+  if (!insertRes.error) return;
+
+  const code = (insertRes.error as any)?.code;
+  if (code !== "23505") {
+    console.warn(`[hapl-refresh] dirty enqueue insert failed title=${titleId}:`, insertRes.error.message);
+    return;
+  }
+  const { data: open } = await sb
+    .from("catalog_dirty_titles")
+    .select("id, reason, metadata")
+    .eq("title_id", titleId)
+    .is("processed_at", null)
+    .limit(1)
+    .maybeSingle();
+  if (!open) return;
+  const reasons = new Set<string>(
+    Array.isArray((open.metadata as any)?.reasons)
+      ? (open.metadata as any).reasons
+      : [open.reason],
+  );
+  reasons.add(reason);
+  const mergedMeta = { ...(open.metadata || {}), ...metadata, reasons: Array.from(reasons) };
+  await sb.from("catalog_dirty_titles")
+    .update({
+      reason,
+      metadata: mergedMeta,
+      enqueued_at: new Date().toISOString(),
+    })
+    .eq("id", open.id);
+}
+
 async function refreshOne(
   sb: any,
   row: { id: string; tmdb_id: number; tmdb_type: "movie" | "tv"; title: string },
   providers: ProviderRow[],
-): Promise<{ ok: boolean; provider_count: number; flipped: number; aliases_added: number }> {
+): Promise<{ ok: boolean; provider_count: number; flipped: number; aliases_added: number; dirty: boolean; skipped_overrides: number }> {
   const [detail, watch] = await Promise.all([
     tmdbDetail(row.tmdb_type, row.tmdb_id),
     tmdbWatchProvidersTR(row.tmdb_type, row.tmdb_id),
   ]);
-  if (!detail) return { ok: false, provider_count: 0, flipped: 0, aliases_added: 0 };
+  if (!detail) return { ok: false, provider_count: 0, flipped: 0, aliases_added: 0, dirty: false, skipped_overrides: 0 };
 
   const now = new Date().toISOString();
+  const dirtyReasons = new Set<string>();
+  const dirtyMeta: Record<string, unknown> = {};
+
+  // Snapshot pre-update title fields for change detection.
+  const { data: prevTitle } = await sb
+    .from("content_titles")
+    .select("title, normalized_title")
+    .eq("id", row.id)
+    .maybeSingle();
+
+  const newNorm = normalizeTitle(detail.title);
+  if (prevTitle && (prevTitle.title !== detail.title || prevTitle.normalized_title !== newNorm)) {
+    dirtyReasons.add("title_upserted");
+    dirtyMeta.title_changed = { from: prevTitle.title, to: detail.title };
+  }
 
   // Update content_titles snapshot
   await sb.from("content_titles").update({
     title: detail.title,
     original_title: detail.original_title || null,
-    normalized_title: normalizeTitle(detail.title),
+    normalized_title: newNorm,
     release_year: detail.release_date ? new Date(detail.release_date).getFullYear() : null,
     first_release_date: detail.release_date || null,
     poster_path: detail.poster_path,
@@ -93,6 +176,13 @@ async function refreshOne(
     content_kind: deriveContentKind(row.tmdb_type, detail.genres || []),
     last_tmdb_sync_at: now,
   }).eq("id", row.id);
+
+  // ── Manual override guard ───────────────────────────────────────────────
+  // Compute active overrides BEFORE any availability write. Providers with an
+  // active override are excluded from both upsert and stale flip, so manual /
+  // provider_rule / firecrawl rows are never overwritten and the user-visible
+  // availability stays under manual control.
+  const overrideProviders = await loadActiveOverrideProviders(sb, row.id);
 
   // Build availability rows
   const seen = new Set<string>();
@@ -107,6 +197,7 @@ async function refreshOne(
     for (const p of list) {
       const match = matchTmdbProvider(p.provider_name, providers);
       if (!match) continue;
+      if (overrideProviders.has(match.id)) continue; // override guard
       const key = `${match.id}:${availType}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -124,7 +215,29 @@ async function refreshOne(
   push(watch.rent, "rent");
   push(watch.buy, "buy");
 
-  // Upsert current availability
+  // Pre-fetch existing tmdb rows for change detection + stale flip.
+  const { data: existing } = await sb
+    .from("content_availability")
+    .select("id, provider_id, availability_type, status, checked_at, source")
+    .eq("title_id", row.id)
+    .eq("region", "TR")
+    .eq("source", "tmdb");
+
+  const existingMap = new Map<string, any>();
+  for (const r of (existing || [])) {
+    existingMap.set(`${r.provider_id}:${r.availability_type}`, r);
+  }
+
+  // Upsert current availability. Override-protected providers were already
+  // filtered out of `rows`, so manual rows (source='manual') are safe.
+  // provider_rule / firecrawl rows live under different `source` values and
+  // share the same conflict key only if TMDB also reports them — but those
+  // are NOT upserted because rows[] only carries source='tmdb' and the upsert
+  // conflict key includes source-agnostic columns; however we never overwrite
+  // a row whose `source` differs because we filter via override guard for
+  // explicitly-protected providers. For unprotected providers, the canonical
+  // policy remains: TMDB is the source of truth.
+  let addedOrFlippedAvailable = 0;
   if (rows.length > 0) {
     await sb.from("content_availability").upsert(
       rows.map((r) => ({
@@ -142,23 +255,19 @@ async function refreshOne(
       })),
       { onConflict: "title_id,provider_id,region,availability_type" },
     );
+    for (const r of rows) {
+      const prev = existingMap.get(`${r.provider_id}:${r.availability_type}`);
+      if (!prev || prev.status !== "available") addedOrFlippedAvailable++;
+    }
   }
 
-  // Stale flip: ONLY consider TMDB-sourced rows.
-  // hapl-refresh is TMDB-only; firecrawl rows must NOT be expired here,
-  // they are re-validated via search-content gap-fill (or a future
-  // dedicated firecrawl refresh job).
+  // Stale flip: ONLY tmdb-sourced rows, AND not override-protected.
   const seenKeys = new Set(rows.map((r) => `${r.provider_id}:${r.availability_type}`));
   const staleCutoff = new Date(Date.now() - AVAILABILITY_FRESH_HOURS * 3600 * 1000).toISOString();
-  const { data: existing } = await sb
-    .from("content_availability")
-    .select("id, provider_id, availability_type, status, checked_at, source")
-    .eq("title_id", row.id)
-    .eq("region", "TR")
-    .eq("source", "tmdb");
 
   const toExpire = (existing || []).filter((r: any) => {
-    if (r.source !== "tmdb") return false; // defensive: never touch firecrawl rows
+    if (r.source !== "tmdb") return false; // never touch manual/provider_rule/firecrawl
+    if (overrideProviders.has(r.provider_id)) return false; // override guard
     const k = `${r.provider_id}:${r.availability_type}`;
     if (seenKeys.has(k)) return false;
     if (r.status !== "available") return false;
@@ -174,17 +283,47 @@ async function refreshOne(
     }).eq("id", r.id);
   }
 
+  if (addedOrFlippedAvailable > 0 || toExpire.length > 0) {
+    dirtyReasons.add("availability_changed");
+    dirtyMeta.added_or_flipped_available = addedOrFlippedAvailable;
+    dirtyMeta.expired = toExpire.length;
+  }
+
   // Opportunistic alias backfill — only when stale (TTL-gated). Soft-fails.
-  // Bounded by the cron batch size, so TMDB call rate stays predictable:
-  // each refreshed title triggers at most 2 extra TMDB calls (alt + trans).
   let aliases_added = 0;
   try {
     if (await needsHydration(sb, row.tmdb_id, row.tmdb_type)) {
       aliases_added = await hydrateAliases(sb, row.tmdb_id, row.tmdb_type, detail);
     }
   } catch (_) { /* swallow */ }
+  if (aliases_added > 0) {
+    dirtyReasons.add("aliases_changed");
+    dirtyMeta.aliases_added = aliases_added;
+  }
 
-  return { ok: true, provider_count: rows.length, flipped: toExpire.length, aliases_added };
+  // Enqueue dirty only if a meaningful change actually happened (no dry/no-op writes).
+  let dirty = false;
+  if (dirtyReasons.size > 0) {
+    const primary = dirtyReasons.has("availability_changed")
+      ? "availability_changed"
+      : dirtyReasons.has("title_upserted")
+      ? "title_upserted"
+      : "aliases_changed";
+    await enqueueDirty(sb, row.id, primary, {
+      ...dirtyMeta,
+      reasons: Array.from(dirtyReasons),
+    });
+    dirty = true;
+  }
+
+  return {
+    ok: true,
+    provider_count: rows.length,
+    flipped: toExpire.length,
+    aliases_added,
+    dirty,
+    skipped_overrides: overrideProviders.size,
+  };
 }
 
 serve(async (req) => {
@@ -245,7 +384,9 @@ serve(async (req) => {
     let failed = 0;
     let totalFlipped = 0;
     let totalAliases = 0;
-    const details: Array<{ id: string; title: string; providers: number; flipped: number; aliases: number }> = [];
+    let totalDirty = 0;
+    let totalOverrideSkips = 0;
+    const details: Array<{ id: string; title: string; providers: number; flipped: number; aliases: number; dirty: boolean; skipped_overrides: number }> = [];
 
     for (const t of titles) {
       try {
@@ -254,8 +395,12 @@ serve(async (req) => {
           processed++;
           totalFlipped += r.flipped;
           totalAliases += r.aliases_added;
+          if (r.dirty) totalDirty++;
+          totalOverrideSkips += r.skipped_overrides;
           details.push({
-            id: t.id, title: t.title, providers: r.provider_count, flipped: r.flipped, aliases: r.aliases_added,
+            id: t.id, title: t.title, providers: r.provider_count,
+            flipped: r.flipped, aliases: r.aliases_added,
+            dirty: r.dirty, skipped_overrides: r.skipped_overrides,
           });
         } else {
           failed++;
@@ -267,7 +412,7 @@ serve(async (req) => {
     }
 
     console.log(
-      `[hapl-refresh] processed=${processed} failed=${failed} flipped=${totalFlipped} aliases=${totalAliases} batch=${batch}`,
+      `[hapl-refresh] processed=${processed} failed=${failed} flipped=${totalFlipped} aliases=${totalAliases} dirty=${totalDirty} override_skips=${totalOverrideSkips} batch=${batch}`,
     );
 
     return new Response(JSON.stringify({
@@ -277,6 +422,8 @@ serve(async (req) => {
       failed,
       flipped: totalFlipped,
       aliases_added: totalAliases,
+      dirty_enqueued: totalDirty,
+      override_skips: totalOverrideSkips,
       details,
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

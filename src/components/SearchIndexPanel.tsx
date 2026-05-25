@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
-import { Loader2, Search, Settings2, Play, RotateCw, FastForward } from 'lucide-react';
+import { Loader2, Search, Settings2, Play, RotateCw, FastForward, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface IndexState {

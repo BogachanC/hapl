@@ -442,8 +442,10 @@ export function mapContentTitleToMeiliDocument(
     type: title.tmdb_type,
     content_kind: title.content_kind,
     title: titleText,
-    original_title: title.original_title || null,
-    normalized_title: title.normalized_title || normalizeTitle(titleText),
+    original_title: rawOriginal || null,
+    localized_title_tr: localizedTitleTr,
+    normalized_title: normalizeTitle(titleText),
+
     exact_aliases: exactAliases,
     franchise_aliases: franchiseAliases,
     loose_aliases: looseAliases,

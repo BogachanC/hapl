@@ -323,18 +323,44 @@ export function mapContentTitleToMeiliDocument(
   const popularity = Number(meta.popularity) || 0;
   const updatedAtMs = title.updated_at ? new Date(title.updated_at).getTime() : Date.now();
 
+  // ── Display title policy ──────────────────────────────────────────────
+  // `title` in Meili = canonical/original (original_title || db.title).
+  // Türkçe localized version is kept as a document-specific alias only —
+  // never promoted to a global Meili synonym (that would cause cross-doc
+  // collisions like "goodfellas" matching Friends via the shared TR title
+  // "Sıkı Dostlar").
+  const rawDbTitle = (title.title || "").trim();
+  const rawOriginal = (title.original_title || "").trim();
+  const displayTitle = rawOriginal || rawDbTitle;
+  const localizedTitleTr =
+    rawDbTitle && normalizeTitle(rawDbTitle) !== normalizeTitle(displayTitle)
+      ? rawDbTitle
+      : null;
+  const titleText = displayTitle;
+
   // ── Categorize aliases ────────────────────────────────────────────────
-  const titleText = title.title || "";
-  const exactAliases = getExactAliasesForTitle(titleText);
+  // Manual exact aliases are looked up by the canonical title.
+  const manualExact = getExactAliasesForTitle(titleText);
+  // Document-specific TR localized title joins exact_aliases so users can
+  // still find content by Türkçe ad. Deduped (case/diacritic insensitive).
+  const exactAliasesSet = new Map<string, string>();
+  for (const a of manualExact) exactAliasesSet.set(normalizeTitle(a), a);
+  if (localizedTitleTr) {
+    const k = normalizeTitle(localizedTitleTr);
+    if (k && !exactAliasesSet.has(k)) exactAliasesSet.set(k, localizedTitleTr);
+  }
+  const exactAliases = Array.from(exactAliasesSet.values());
+
   const franchiseMatch = getFranchiseAliasesForTitle(titleText);
   const franchiseAliases = franchiseMatch?.variants ?? [];
   const franchiseKey = franchiseMatch?.franchiseKey ?? null;
 
-  // Move any DB aliases that are also exact/franchise variants OUT of loose.
+  // Move any DB aliases that are also exact/franchise/localized variants OUT of loose.
   const promoted = new Set<string>(
     [...exactAliases, ...franchiseAliases].map((s) => normalizeTitle(s)),
   );
   const looseAliases = aliasList.filter((a) => !promoted.has(normalizeTitle(a)));
+
 
   // ── Franchise / spin-off detection ───────────────────────────────────
   const normT = normalizeTitle(titleText);

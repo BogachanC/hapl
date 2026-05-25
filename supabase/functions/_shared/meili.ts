@@ -201,8 +201,12 @@ export interface MeiliDoc {
   tmdb_id: number;
   type: "movie" | "tv";
   content_kind: string | null;
+  // Canonical / display title — original_title || title. This is what
+  // ContentCard renders. Türkçe localized form lives in localized_title_tr
+  // and exact_aliases (document-specific), never as a global synonym.
   title: string;
   original_title: string | null;
+  localized_title_tr: string | null;
   normalized_title: string;
   // Categorized alias buckets — see SEARCHABLE_ATTRIBUTES for priority.
   exact_aliases: string[];
@@ -230,6 +234,7 @@ export interface MeiliDoc {
   is_special: boolean;
   search_rank: number; // lower = more canonical
 }
+
 
 interface RawTitle {
   id: string;

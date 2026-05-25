@@ -384,6 +384,8 @@ export async function searchTitlesInDb(
       aliasMetaByKey.set(k, arr);
     }
   }
+
+  const results: DbContentResultOut[] = [];
   for (const t of filteredTitles) {
     const cand = candidates.get(`${t.tmdb_type}:${t.tmdb_id}`);
     if (!cand) continue;

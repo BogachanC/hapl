@@ -660,9 +660,9 @@ serve(async (req) => {
     const mode: "typeahead" | "full" = rawMode === "typeahead" ? "typeahead" : "full";
 
     const baseKey = cacheKey(query);
-    // v2: display title is now canonical (original_title || title).
-    // Bumping the version invalidates pre-policy cached entries without DB churn.
-    const key = `v2:${baseKey}:${categoryFilter ?? "all"}:${providerSlug ?? "all"}:${mode}`;
+    // v3: display-title policy v2 (Turkish-aware + non-Latin → English alias);
+    // article-stripped aliases; new Meili doc shape (english_title, original_script_title).
+    const key = `v3:${baseKey}:${categoryFilter ?? "all"}:${providerSlug ?? "all"}:${mode}`;
 
 
     // Background scheduler — survives past response.

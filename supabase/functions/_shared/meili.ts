@@ -10,6 +10,11 @@ import {
   getExactAliasesForTitle,
   getFranchiseAliasesForTitle,
 } from "./aliases.ts";
+import {
+  pickDisplayTitle,
+  stripLeadingArticle,
+  type AliasMeta,
+} from "./display-title.ts";
 
 export interface MeiliConfig {
   host: string;
@@ -81,9 +86,12 @@ async function meiliRequest<T = any>(
 //   loose_aliases      — DB-collected aliases (countries, regional spellings)
 const SEARCHABLE_ATTRIBUTES = [
   "title",
+  "english_title",
   "exact_aliases",
+  "article_stripped_aliases",
   "localized_title_tr",
   "original_title",
+  "original_script_title",
   "normalized_title",
   "franchise_aliases",
   "loose_aliases",
@@ -201,15 +209,20 @@ export interface MeiliDoc {
   tmdb_id: number;
   type: "movie" | "tv";
   content_kind: string | null;
-  // Canonical / display title — original_title || title. This is what
-  // ContentCard renders. Türkçe localized form lives in localized_title_tr
-  // and exact_aliases (document-specific), never as a global synonym.
+  // Display title per policy v2:
+  //   • Turkish productions → Turkish title.
+  //   • All other content   → English / Latin canonical (English alias,
+  //                           then Latin original_title, then any Latin form).
+  // ContentCard renders this `title` field directly.
   title: string;
   original_title: string | null;
+  english_title: string | null;
   localized_title_tr: string | null;
+  original_script_title: string | null; // non-Latin original (Japanese/Korean/etc.)
   normalized_title: string;
   // Categorized alias buckets — see SEARCHABLE_ATTRIBUTES for priority.
   exact_aliases: string[];
+  article_stripped_aliases: string[]; // "The White Lotus" → "white lotus"
   franchise_aliases: string[];
   loose_aliases: string[];
   // Kept for back-compat / debugging; not in searchableAttributes anymore.
@@ -252,7 +265,14 @@ interface RawTitle {
   updated_at: string;
 }
 
-interface RawAlias { alias: string }
+// RawAlias is now the full alias record so display-title policy and the
+// english_title field have language/country/source available.
+interface RawAlias {
+  alias: string;
+  source?: string | null;
+  language?: string | null;
+  country?: string | null;
+}
 
 interface RawAvail {
   provider_id: string;
@@ -323,33 +343,68 @@ export function mapContentTitleToMeiliDocument(
   const popularity = Number(meta.popularity) || 0;
   const updatedAtMs = title.updated_at ? new Date(title.updated_at).getTime() : Date.now();
 
-  // ── Display title policy ──────────────────────────────────────────────
-  // `title` in Meili = canonical/original (original_title || db.title).
-  // Türkçe localized version is kept as a document-specific alias only —
-  // never promoted to a global Meili synonym (that would cause cross-doc
-  // collisions like "goodfellas" matching Friends via the shared TR title
-  // "Sıkı Dostlar").
-  const rawDbTitle = (title.title || "").trim();
+  // ── Display title policy v2 ───────────────────────────────────────────
+  // Generic, catalog-wide rules (display-title.ts):
+  //   • Turkish productions → Turkish title.
+  //   • Foreign Latin       → original_title.
+  //   • Foreign non-Latin   → English alias, then any Latin candidate.
+  // Türkçe localized titles + non-Latin originals stay as hidden aliases.
+  const aliasMeta: AliasMeta[] = aliases.map((a) => ({
+    alias: a.alias,
+    source: a.source ?? null,
+    language: a.language ?? null,
+    country: a.country ?? null,
+  }));
+  const picked = pickDisplayTitle(title.title, title.original_title, aliasMeta, meta);
+  const titleText = picked.display || title.title || title.original_title || "";
   const rawOriginal = (title.original_title || "").trim();
-  const displayTitle = rawOriginal || rawDbTitle;
-  const localizedTitleTr =
-    rawDbTitle && normalizeTitle(rawDbTitle) !== normalizeTitle(displayTitle)
-      ? rawDbTitle
-      : null;
-  const titleText = displayTitle;
+  const localizedTitleTr = picked.localized_tr;
+  const englishTitle = picked.english;
+  const originalScriptTitle = picked.original_script;
+
 
   // ── Categorize aliases ────────────────────────────────────────────────
   // Manual exact aliases are looked up by the canonical title.
   const manualExact = getExactAliasesForTitle(titleText);
-  // Document-specific TR localized title joins exact_aliases so users can
-  // still find content by Türkçe ad. Deduped (case/diacritic insensitive).
+  // Document-specific exact aliases: include TR localized title, original
+  // title (when distinct from display), original_script_title, and the
+  // best English alias if different. These are document-bound, never global
+  // synonyms (so "sıkı dostlar" matches both GoodFellas and Friends docs
+  // but doesn't cross-pollinate in original-title queries like "goodfellas").
   const exactAliasesSet = new Map<string, string>();
-  for (const a of manualExact) exactAliasesSet.set(normalizeTitle(a), a);
-  if (localizedTitleTr) {
-    const k = normalizeTitle(localizedTitleTr);
-    if (k && !exactAliasesSet.has(k)) exactAliasesSet.set(k, localizedTitleTr);
+  const addExact = (v?: string | null) => {
+    if (!v) return;
+    const k = normalizeTitle(v);
+    if (!k || exactAliasesSet.has(k)) return;
+    exactAliasesSet.set(k, v);
+  };
+  for (const a of manualExact) addExact(a);
+  addExact(localizedTitleTr);
+  addExact(englishTitle);
+  if (rawOriginal && normalizeTitle(rawOriginal) !== normalizeTitle(titleText)) {
+    addExact(rawOriginal);
   }
+  if (originalScriptTitle) addExact(originalScriptTitle);
   const exactAliases = Array.from(exactAliasesSet.values());
+
+  // Article-stripped aliases: leading "the/a/an" stripped from any Latin
+  // title/alias, so "white lotus" matches "The White Lotus" exactly.
+  const articleStrippedSet = new Map<string, string>();
+  const addStripped = (v?: string | null) => {
+    if (!v) return;
+    const s = stripLeadingArticle(v);
+    if (!s) return;
+    const k = normalizeTitle(s);
+    if (!k || articleStrippedSet.has(k)) return;
+    // Don't duplicate an already-canonical normalized form.
+    if (k === normalizeTitle(titleText)) return;
+    articleStrippedSet.set(k, s);
+  };
+  addStripped(titleText);
+  addStripped(rawOriginal);
+  addStripped(englishTitle);
+  for (const a of manualExact) addStripped(a);
+  const articleStrippedAliases = Array.from(articleStrippedSet.values());
 
   const franchiseMatch = getFranchiseAliasesForTitle(titleText);
   const franchiseAliases = franchiseMatch?.variants ?? [];
@@ -357,9 +412,10 @@ export function mapContentTitleToMeiliDocument(
 
   // Move any DB aliases that are also exact/franchise/localized variants OUT of loose.
   const promoted = new Set<string>(
-    [...exactAliases, ...franchiseAliases].map((s) => normalizeTitle(s)),
+    [...exactAliases, ...franchiseAliases, ...articleStrippedAliases].map((s) => normalizeTitle(s)),
   );
   const looseAliases = aliasList.filter((a) => !promoted.has(normalizeTitle(a)));
+
 
 
   // ── Franchise / spin-off detection ───────────────────────────────────
@@ -443,10 +499,13 @@ export function mapContentTitleToMeiliDocument(
     content_kind: title.content_kind,
     title: titleText,
     original_title: rawOriginal || null,
+    english_title: englishTitle,
     localized_title_tr: localizedTitleTr,
+    original_script_title: originalScriptTitle,
     normalized_title: normalizeTitle(titleText),
 
     exact_aliases: exactAliases,
+    article_stripped_aliases: articleStrippedAliases,
     franchise_aliases: franchiseAliases,
     loose_aliases: looseAliases,
     aliases: aliasList,

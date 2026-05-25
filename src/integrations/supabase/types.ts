@@ -14,6 +14,50 @@ export type Database = {
   }
   public: {
     Tables: {
+      catalog_dirty_titles: {
+        Row: {
+          attempts: number
+          enqueued_at: string
+          id: string
+          last_error: string | null
+          metadata: Json | null
+          processed_at: string | null
+          reason: string
+          source_job_id: string | null
+          title_id: string
+        }
+        Insert: {
+          attempts?: number
+          enqueued_at?: string
+          id?: string
+          last_error?: string | null
+          metadata?: Json | null
+          processed_at?: string | null
+          reason: string
+          source_job_id?: string | null
+          title_id: string
+        }
+        Update: {
+          attempts?: number
+          enqueued_at?: string
+          id?: string
+          last_error?: string | null
+          metadata?: Json | null
+          processed_at?: string | null
+          reason?: string
+          source_job_id?: string | null
+          title_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "catalog_dirty_titles_title_id_fkey"
+            columns: ["title_id"]
+            isOneToOne: false
+            referencedRelation: "content_titles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       catalog_seed_jobs: {
         Row: {
           baseline: Json | null

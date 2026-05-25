@@ -292,7 +292,7 @@ serve(async (req: Request) => {
         tmdb_id: t.tmdb_id,
         type: t.tmdb_type,
         content_kind: t.content_kind,
-        title: t.title,
+        title: (t.original_title || "").trim() || t.title,
         year: t.release_year,
         overview: t.overview || "",
         poster: t.poster_path ? `${TMDB_IMG}/w500${t.poster_path}` : null,

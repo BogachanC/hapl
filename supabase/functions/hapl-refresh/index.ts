@@ -384,7 +384,9 @@ serve(async (req) => {
     let failed = 0;
     let totalFlipped = 0;
     let totalAliases = 0;
-    const details: Array<{ id: string; title: string; providers: number; flipped: number; aliases: number }> = [];
+    let totalDirty = 0;
+    let totalOverrideSkips = 0;
+    const details: Array<{ id: string; title: string; providers: number; flipped: number; aliases: number; dirty: boolean; skipped_overrides: number }> = [];
 
     for (const t of titles) {
       try {
@@ -393,8 +395,12 @@ serve(async (req) => {
           processed++;
           totalFlipped += r.flipped;
           totalAliases += r.aliases_added;
+          if (r.dirty) totalDirty++;
+          totalOverrideSkips += r.skipped_overrides;
           details.push({
-            id: t.id, title: t.title, providers: r.provider_count, flipped: r.flipped, aliases: r.aliases_added,
+            id: t.id, title: t.title, providers: r.provider_count,
+            flipped: r.flipped, aliases: r.aliases_added,
+            dirty: r.dirty, skipped_overrides: r.skipped_overrides,
           });
         } else {
           failed++;
@@ -406,7 +412,7 @@ serve(async (req) => {
     }
 
     console.log(
-      `[hapl-refresh] processed=${processed} failed=${failed} flipped=${totalFlipped} aliases=${totalAliases} batch=${batch}`,
+      `[hapl-refresh] processed=${processed} failed=${failed} flipped=${totalFlipped} aliases=${totalAliases} dirty=${totalDirty} override_skips=${totalOverrideSkips} batch=${batch}`,
     );
 
     return new Response(JSON.stringify({
@@ -416,6 +422,8 @@ serve(async (req) => {
       failed,
       flipped: totalFlipped,
       aliases_added: totalAliases,
+      dirty_enqueued: totalDirty,
+      override_skips: totalOverrideSkips,
       details,
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

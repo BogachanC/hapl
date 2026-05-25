@@ -191,7 +191,7 @@ async function collectBatch(
   if (movieIds.length > 0) {
     aliasTasks.push(
       sb.from("content_title_aliases")
-        .select("tmdb_id, tmdb_type, alias")
+        .select("tmdb_id, tmdb_type, alias, source, language, country")
         .eq("tmdb_type", "movie")
         .in("tmdb_id", movieIds),
     );
@@ -199,18 +199,18 @@ async function collectBatch(
   if (tvIds.length > 0) {
     aliasTasks.push(
       sb.from("content_title_aliases")
-        .select("tmdb_id, tmdb_type, alias")
+        .select("tmdb_id, tmdb_type, alias, source, language, country")
         .eq("tmdb_type", "tv")
         .in("tmdb_id", tvIds),
     );
   }
   const aliasRes = await Promise.all(aliasTasks);
-  const aliasByKey = new Map<string, { alias: string }[]>();
+  const aliasByKey = new Map<string, { alias: string; source: string | null; language: string | null; country: string | null }[]>();
   for (const r of aliasRes) {
     for (const row of r.data || []) {
       const key = `${row.tmdb_type}:${row.tmdb_id}`;
       const arr = aliasByKey.get(key) || [];
-      arr.push({ alias: row.alias });
+      arr.push({ alias: row.alias, source: row.source ?? null, language: row.language ?? null, country: row.country ?? null });
       aliasByKey.set(key, arr);
     }
   }

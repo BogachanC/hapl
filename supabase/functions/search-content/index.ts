@@ -1,7 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
-import { cacheKey, normalizeTitle } from "../_shared/normalize.ts";
+import { cacheKey, normalizeTitle, meaningfulTokens } from "../_shared/normalize.ts";
+import { stripLeadingArticle } from "../_shared/display-title.ts";
 import { rankTmdbResults } from "../_shared/relevance.ts";
 import {
   tmdbMultiSearch,

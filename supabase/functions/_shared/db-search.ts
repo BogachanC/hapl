@@ -475,9 +475,11 @@ export async function searchTitlesInDb(
     const voteCount = Number(meta.vote_count) || 0;
     const origin = deriveOriginFromMeta(meta, meta.original_language || null);
 
-    // Display = canonical/original. Türkçe localized form stays searchable
-    // via aliases but is never shown on the card.
-    const displayTitle = (t.original_title || "").trim() || t.title;
+    // Display Title Policy v2 — Turkish productions keep Turkish; foreign
+    // non-Latin use English alias; foreign Latin use original_title.
+    const aliasMetas = aliasMetaByKey.get(`${t.tmdb_type}:${t.tmdb_id}`) || [];
+    const picked = pickDisplayTitle(t.title || "", t.original_title || null, aliasMetas, meta);
+    const displayTitle = picked.display || t.title;
     results.push({
       id: Number(t.tmdb_id),
       type: t.tmdb_type as "movie" | "tv",

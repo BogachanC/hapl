@@ -18,6 +18,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { pickDisplayTitle, type AliasMeta } from "../_shared/display-title.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -203,6 +204,31 @@ serve(async (req: Request) => {
     const provById = new Map<string, { id: string; slug: string; display_name: string }>();
     for (const p of provRows || []) provById.set(p.id, p);
 
+    // 5b) Pull aliases for displayed titles (for display-title policy v2).
+    const movieIdsF = titleRows.filter((t: any) => t.tmdb_type === "movie").map((t: any) => Number(t.tmdb_id));
+    const tvIdsF = titleRows.filter((t: any) => t.tmdb_type === "tv").map((t: any) => Number(t.tmdb_id));
+    const aliasMetaByKey = new Map<string, AliasMeta[]>();
+    const aliasTasks: Promise<any>[] = [];
+    if (movieIdsF.length > 0) {
+      aliasTasks.push(sb.from("content_title_aliases")
+        .select("tmdb_id, tmdb_type, alias, source, language, country")
+        .eq("tmdb_type", "movie").in("tmdb_id", movieIdsF));
+    }
+    if (tvIdsF.length > 0) {
+      aliasTasks.push(sb.from("content_title_aliases")
+        .select("tmdb_id, tmdb_type, alias, source, language, country")
+        .eq("tmdb_type", "tv").in("tmdb_id", tvIdsF));
+    }
+    const aliasRes = await Promise.all(aliasTasks);
+    for (const r of aliasRes) {
+      for (const row of r.data || []) {
+        const k = `${row.tmdb_type}:${row.tmdb_id}`;
+        const arr = aliasMetaByKey.get(k) || [];
+        arr.push({ alias: row.alias, source: row.source ?? null, language: row.language ?? null, country: row.country ?? null });
+        aliasMetaByKey.set(k, arr);
+      }
+    }
+
     // Also pull display platforms metadata (logo/color) from `platforms` if slug matches.
     // The two tables (`streaming_providers` vs legacy `platforms`) drifted on a few
     // slugs — bridge them so we don't silently drop titles whose only provider is
@@ -287,12 +313,15 @@ serve(async (req: Request) => {
             ? "yabanci"
             : "bilinmiyor";
 
+      const aliasMetas = aliasMetaByKey.get(`${t.tmdb_type}:${t.tmdb_id}`) || [];
+      const picked = pickDisplayTitle(t.title || "", t.original_title || null, aliasMetas, meta);
+      const displayTitle = picked.display || t.title;
       items.push({
         id: t.id,
         tmdb_id: t.tmdb_id,
         type: t.tmdb_type,
         content_kind: t.content_kind,
-        title: (t.original_title || "").trim() || t.title,
+        title: displayTitle,
         year: t.release_year,
         overview: t.overview || "",
         poster: t.poster_path ? `${TMDB_IMG}/w500${t.poster_path}` : null,

@@ -11,6 +11,7 @@
 import { normalizeTitle, meaningfulTokens, splitQueryTokens, compactNormalizeTitle } from "./normalize.ts";
 import { getAliasGroupMembers } from "./aliases.ts";
 import { tmdbImage } from "./tmdb.ts";
+import { pickDisplayTitle, type AliasMeta } from "./display-title.ts";
 
 export interface DbPlatformOut {
   id?: number;
@@ -354,6 +355,36 @@ export async function searchTitlesInDb(
   const aliasGroup = getAliasGroupMembers(rawQuery);
   const requireAvailable = opts.requireAvailable !== false;
 
+  // Fetch aliases for the filtered titles so pickDisplayTitle has English /
+  // localized-TR / original-script variants for non-Latin display selection.
+  const movieIdsF = filteredTitles.filter((t) => t.tmdb_type === "movie").map((t) => Number(t.tmdb_id));
+  const tvIdsF = filteredTitles.filter((t) => t.tmdb_type === "tv").map((t) => Number(t.tmdb_id));
+  const aliasMetaByKey = new Map<string, AliasMeta[]>();
+  const aliasTasksF: Promise<any>[] = [];
+  if (movieIdsF.length > 0) {
+    aliasTasksF.push(
+      sb.from("content_title_aliases")
+        .select("tmdb_id, tmdb_type, alias, source, language, country")
+        .eq("tmdb_type", "movie").in("tmdb_id", movieIdsF),
+    );
+  }
+  if (tvIdsF.length > 0) {
+    aliasTasksF.push(
+      sb.from("content_title_aliases")
+        .select("tmdb_id, tmdb_type, alias, source, language, country")
+        .eq("tmdb_type", "tv").in("tmdb_id", tvIdsF),
+    );
+  }
+  const aliasResF = await Promise.all(aliasTasksF);
+  for (const r of aliasResF) {
+    for (const row of r.data || []) {
+      const k = `${row.tmdb_type}:${row.tmdb_id}`;
+      const arr = aliasMetaByKey.get(k) || [];
+      arr.push({ alias: row.alias, source: row.source ?? null, language: row.language ?? null, country: row.country ?? null });
+      aliasMetaByKey.set(k, arr);
+    }
+  }
+
   const results: DbContentResultOut[] = [];
   for (const t of filteredTitles) {
     const cand = candidates.get(`${t.tmdb_type}:${t.tmdb_id}`);
@@ -444,9 +475,11 @@ export async function searchTitlesInDb(
     const voteCount = Number(meta.vote_count) || 0;
     const origin = deriveOriginFromMeta(meta, meta.original_language || null);
 
-    // Display = canonical/original. Türkçe localized form stays searchable
-    // via aliases but is never shown on the card.
-    const displayTitle = (t.original_title || "").trim() || t.title;
+    // Display Title Policy v2 — Turkish productions keep Turkish; foreign
+    // non-Latin use English alias; foreign Latin use original_title.
+    const aliasMetas = aliasMetaByKey.get(`${t.tmdb_type}:${t.tmdb_id}`) || [];
+    const picked = pickDisplayTitle(t.title || "", t.original_title || null, aliasMetas, meta);
+    const displayTitle = picked.display || t.title;
     results.push({
       id: Number(t.tmdb_id),
       type: t.tmdb_type as "movie" | "tv",

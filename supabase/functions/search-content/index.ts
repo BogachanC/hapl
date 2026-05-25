@@ -1,7 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
-import { cacheKey, normalizeTitle } from "../_shared/normalize.ts";
+import { cacheKey, normalizeTitle, meaningfulTokens } from "../_shared/normalize.ts";
+import { stripLeadingArticle } from "../_shared/display-title.ts";
 import { rankTmdbResults } from "../_shared/relevance.ts";
 import {
   tmdbMultiSearch,
@@ -553,20 +554,48 @@ async function tryMeiliBranch(
     }
   }
 
+  // ── Helper: run a single Meili query and return raw hits ─────────────
+  const runMeili = async (qStr: string): Promise<MeiliDoc[]> => {
+    try {
+      const t0 = Date.now();
+      const res = await searchMeili(
+        { q: qStr, limit: 20, filter: filters.join(" AND ") },
+        cfg,
+      );
+      console.log(
+        `[hapl] meili: query="${qStr}" hits=${res.hits.length} ms=${res.processingTimeMs} total=${Date.now() - t0}`,
+      );
+      return res.hits || [];
+    } catch (e: any) {
+      console.error("[hapl] meili error:", e?.message || e);
+      return [];
+    }
+  };
+
+  // Primary search.
   let hits: MeiliDoc[] = [];
   try {
-    const t0 = Date.now();
-    const res = await searchMeili(
-      { q, limit: 20, filter: filters.join(" AND ") },
-      cfg,
-    );
-    hits = res.hits || [];
-    console.log(
-      `[hapl] meili: query="${q}" hits=${hits.length} ms=${res.processingTimeMs} total=${Date.now() - t0}`,
-    );
-  } catch (e: any) {
-    console.error("[hapl] meili error → fallback:", e?.message || e);
+    hits = await runMeili(q);
+  } catch {
     return null;
+  }
+
+  // ── Article-stripped retry ────────────────────────────────────────────
+  // "the white lotus" → also try "white lotus". We merge both result sets
+  // so "the X" and "X" both surface The X reliably even when the dataset
+  // only stored one of those forms in the title attribute.
+  const stripped = stripLeadingArticle(q);
+  if (stripped && stripped.length >= 2 && normalizeTitle(stripped) !== normalizeTitle(q)) {
+    const extra = await runMeili(stripped);
+    if (extra.length > 0) {
+      const seen = new Set(hits.map((h) => h.id));
+      for (const h of extra) {
+        if (!seen.has(h.id)) {
+          seen.add(h.id);
+          hits.push(h);
+        }
+      }
+    }
   }
 
   if (hits.length === 0) return { results: [], strong: false, reason: "empty" };
@@ -578,6 +607,7 @@ async function tryMeiliBranch(
   // like "goodfellas", we split match strength into three tiers:
   //
   //   Tier 0 — query exactly equals title (canonical) or original_title
+  //            OR matches article_stripped form (the white lotus ↔ white lotus)
   //   Tier 1 — query exactly equals one of exact_aliases / localized_title_tr
   //   Tier 2 — everything else (text relevance, franchise, loose aliases)
   //
@@ -585,16 +615,33 @@ async function tryMeiliBranch(
   // then vote_count desc (popular canonical wins on duplicates), then
   // original Meili order.
   const nq = normalizeTitle(q);
+  const nqStripped = stripped ? normalizeTitle(stripped) : null;
+  const queryForms = new Set<string>([nq]);
+  if (nqStripped) queryForms.add(nqStripped);
+
+  const matchesAny = (n: string): boolean => !!n && queryForms.has(n);
+
   const tierOf = (h: MeiliDoc): number => {
     const t = normalizeTitle(h.title || "");
     const ot = normalizeTitle(h.original_title || "");
-    if ((t && t === nq) || (ot && ot === nq)) return 0;
+    if (matchesAny(t) || matchesAny(ot)) return 0;
+    // Article-stripped match on title also tier-0 (canonical with leading "The").
+    const tStripped = stripLeadingArticle(h.title || "");
+    if (tStripped && queryForms.has(normalizeTitle(tStripped))) return 0;
+    const otStripped = stripLeadingArticle(h.original_title || "");
+    if (otStripped && queryForms.has(normalizeTitle(otStripped))) return 0;
+    const articleAliases = Array.isArray((h as any).article_stripped_aliases)
+      ? (h as any).article_stripped_aliases as string[]
+      : [];
+    for (const a of articleAliases) {
+      if (matchesAny(normalizeTitle(a))) return 0;
+    }
     const exAliases = Array.isArray(h.exact_aliases) ? h.exact_aliases : [];
     for (const a of exAliases) {
-      if (normalizeTitle(a) === nq) return 1;
+      if (matchesAny(normalizeTitle(a))) return 1;
     }
     const loc = normalizeTitle((h as any).localized_title_tr || "");
-    if (loc && loc === nq) return 1;
+    if (matchesAny(loc)) return 1;
     return 2;
   };
   const indexed = hits.map((h, i) => ({ h, i, tier: tierOf(h) }));
@@ -611,25 +658,52 @@ async function tryMeiliBranch(
   });
   hits = indexed.map((x) => x.h);
 
-
-
-
   const providerSlugMap = await loadProviderSlugMap(sb);
   const results = hits.map((h) => meiliHitToContentResult(h, providerSlugMap));
+
+  // ── Multi-token coverage guard ────────────────────────────────────────
+  // For multi-word queries ("white lotus", "ice age", "money heist") the top
+  // hit MUST cover ≥2 query tokens in either title/original_title/aliases.
+  // Otherwise "white lotus" returning a Snow White result (only "white"
+  // overlaps) is silently downgraded to a weak result and we fall back.
+  const queryTokens = meaningfulTokens(q);
+  const requireCoverage = queryTokens.length >= 2;
+  const topCoverage = (h: MeiliDoc): number => {
+    const haystack = new Set<string>();
+    const addTokensOf = (s?: string | null) => {
+      if (!s) return;
+      for (const tok of meaningfulTokens(s)) haystack.add(tok);
+    };
+    addTokensOf(h.title);
+    addTokensOf(h.original_title);
+    addTokensOf((h as any).english_title);
+    addTokensOf((h as any).localized_title_tr);
+    addTokensOf((h as any).original_script_title);
+    for (const a of (h.exact_aliases || [])) addTokensOf(a);
+    for (const a of ((h as any).article_stripped_aliases || [])) addTokensOf(a);
+    for (const a of (h.franchise_aliases || [])) addTokensOf(a);
+    for (const a of (h.loose_aliases || [])) addTokensOf(a);
+    let n = 0;
+    for (const t of queryTokens) if (haystack.has(t)) n++;
+    return n;
+  };
 
   const top = hits[0];
   const topHasProviders = (top.providers?.length ?? 0) > 0;
   const topRankOk = (top.search_rank ?? 999) <= 200; // not a hard spin-off/special
   const enoughResults = hits.length >= 3;
-  const strong = topHasProviders && topRankOk && enoughResults;
+  const coverage = requireCoverage ? topCoverage(top) : queryTokens.length;
+  const coverageOk = !requireCoverage || coverage >= 2 || tierOf(top) === 0;
+  const strong = topHasProviders && topRankOk && enoughResults && coverageOk;
   const reason = !topHasProviders
     ? "top_no_providers"
-
     : !topRankOk
       ? "top_spinoff"
       : !enoughResults
         ? "too_few_results"
-        : "ok";
+        : !coverageOk
+          ? `weak_coverage(${coverage}/${queryTokens.length})`
+          : "ok";
 
   return { results, strong, reason };
 }

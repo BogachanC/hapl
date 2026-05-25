@@ -209,15 +209,20 @@ export interface MeiliDoc {
   tmdb_id: number;
   type: "movie" | "tv";
   content_kind: string | null;
-  // Canonical / display title — original_title || title. This is what
-  // ContentCard renders. Türkçe localized form lives in localized_title_tr
-  // and exact_aliases (document-specific), never as a global synonym.
+  // Display title per policy v2:
+  //   • Turkish productions → Turkish title.
+  //   • All other content   → English / Latin canonical (English alias,
+  //                           then Latin original_title, then any Latin form).
+  // ContentCard renders this `title` field directly.
   title: string;
   original_title: string | null;
+  english_title: string | null;
   localized_title_tr: string | null;
+  original_script_title: string | null; // non-Latin original (Japanese/Korean/etc.)
   normalized_title: string;
   // Categorized alias buckets — see SEARCHABLE_ATTRIBUTES for priority.
   exact_aliases: string[];
+  article_stripped_aliases: string[]; // "The White Lotus" → "white lotus"
   franchise_aliases: string[];
   loose_aliases: string[];
   // Kept for back-compat / debugging; not in searchableAttributes anymore.
@@ -260,7 +265,14 @@ interface RawTitle {
   updated_at: string;
 }
 
-interface RawAlias { alias: string }
+// RawAlias is now the full alias record so display-title policy and the
+// english_title field have language/country/source available.
+interface RawAlias {
+  alias: string;
+  source?: string | null;
+  language?: string | null;
+  country?: string | null;
+}
 
 interface RawAvail {
   provider_id: string;

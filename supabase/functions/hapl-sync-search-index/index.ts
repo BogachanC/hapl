@@ -360,6 +360,195 @@ serve(async (req) => {
     }
 
 
+    // ── Admin-only Search QA Audit ───────────────────────────────────────
+    // Runs a battery of golden/regression checks directly against Meili
+    // and reports an issue list. Not exposed publicly; admin JWT or
+    // x-hapl-sync-token required (enforced by authorize() above).
+    if (action === "qa_audit") {
+      type Issue = {
+        severity: "P0" | "P1" | "P2";
+        check: string;
+        query: string;
+        expected: string;
+        actual: string;
+        reason: string;
+        suggested_fix: string;
+      };
+      const issues: Issue[] = [];
+      const summary: any[] = [];
+
+      const normalize = (s: string): string => {
+        const TR: Record<string,string> = { ı:"i", İ:"i", ş:"s", Ş:"s", ğ:"g", Ğ:"g", ü:"u", Ü:"u", ö:"o", Ö:"o", ç:"c", Ç:"c" };
+        let out = ""; for (const ch of s || "") out += TR[ch] ?? ch;
+        return out.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+          .replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+      };
+      const stripArticle = (s: string): string | null => {
+        const m = (s || "").match(/^\s*(the|a|an)\s+(.+)$/i);
+        return m ? m[2].trim() : null;
+      };
+      const isLatin = (s: string): boolean => {
+        if (!s) return false;
+        const NL = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\u0600-\u06ff\u0590-\u05ff\u0400-\u04ff\u0900-\u097f\u0e00-\u0e7f\u0370-\u03ff]/;
+        return !NL.test(s);
+      };
+
+      const runSearch = async (q: string, limit = 5) => {
+        try {
+          const r = await searchMeili({ q, limit }, cfg);
+          return r.hits;
+        } catch { return []; }
+      };
+
+      // Golden checks: query → must be top-1 by canonical title match
+      const golden: Array<{ q: string; expectTitleContains: string; severity?: "P0"|"P1" }> = [
+        { q: "white lotus",          expectTitleContains: "white lotus", severity: "P0" },
+        { q: "the white lotus",      expectTitleContains: "white lotus", severity: "P0" },
+        { q: "goodfellas",           expectTitleContains: "goodfellas",  severity: "P0" },
+        { q: "friends",              expectTitleContains: "friends",     severity: "P0" },
+        { q: "ice age",              expectTitleContains: "ice age",     severity: "P1" },
+        { q: "buz devri",            expectTitleContains: "ice age",     severity: "P1" },
+        { q: "shrek",                expectTitleContains: "shrek",       severity: "P1" },
+        { q: "şrek",                 expectTitleContains: "shrek",       severity: "P1" },
+        { q: "fast and furious",     expectTitleContains: "fast",        severity: "P1" },
+        { q: "hızlı ve öfkeli",      expectTitleContains: "fast",        severity: "P1" },
+        { q: "lord of the rings",    expectTitleContains: "lord of the rings", severity: "P1" },
+        { q: "yüzüklerin efendisi",  expectTitleContains: "lord of the rings", severity: "P1" },
+        { q: "money heist",          expectTitleContains: "money heist", severity: "P1" },
+        { q: "la casa de papel",     expectTitleContains: "money heist", severity: "P1" },
+      ];
+
+      for (const g of golden) {
+        const hits = await runSearch(g.q, 5);
+        const top = hits[0];
+        const topTitleN = normalize(top?.title || "");
+        const ok = top && topTitleN.includes(normalize(g.expectTitleContains));
+        summary.push({
+          check: "golden",
+          query: g.q,
+          top: top ? { title: top.title, year: top.year, search_rank: top.search_rank } : null,
+          ok,
+        });
+        if (!ok) {
+          issues.push({
+            severity: g.severity || "P1",
+            check: "golden",
+            query: g.q,
+            expected: `top-1 title contains "${g.expectTitleContains}"`,
+            actual: top ? `${top.title} (${top.year})` : "no_results",
+            reason: "top-1 mismatch",
+            suggested_fix: "verify document english_title / exact_aliases / article_stripped_aliases; check search_rank for the expected doc",
+          });
+        }
+      }
+
+      // article_stripped parity: "white lotus" and "the white lotus" same top-1
+      {
+        const a = await runSearch("white lotus", 1);
+        const b = await runSearch("the white lotus", 1);
+        const ok = a[0]?.id && b[0]?.id && a[0].id === b[0].id;
+        summary.push({ check: "article_stripped", a: a[0]?.title, b: b[0]?.title, ok });
+        if (!ok) issues.push({
+          severity: "P0", check: "article_stripped", query: "white lotus | the white lotus",
+          expected: "same top-1 doc", actual: `${a[0]?.title} | ${b[0]?.title}`,
+          reason: "article-stripped retry not surfacing same doc",
+          suggested_fix: "ensure article_stripped_aliases populated and runMeili retry path is active",
+        });
+      }
+
+      // alias_collision: goodfellas top-1 must NOT be Friends
+      {
+        const hits = await runSearch("goodfellas", 3);
+        const top = hits[0];
+        const ok = top && !normalize(top.title || "").includes("friends");
+        summary.push({ check: "alias_collision", top: top?.title, ok });
+        if (!ok) issues.push({
+          severity: "P0", check: "alias_collision", query: "goodfellas",
+          expected: "GoodFellas top-1, NOT Friends",
+          actual: top?.title || "—",
+          reason: "Sıkı Dostlar alias collided across docs",
+          suggested_fix: "ensure localized_title_tr is doc-specific exact_alias not global synonym",
+        });
+      }
+
+      // Snow White must NOT outrank The White Lotus on "white lotus"
+      {
+        const hits = await runSearch("white lotus", 5);
+        const top = hits[0];
+        const ok = top && normalize(top.title || "").includes("white lotus");
+        summary.push({ check: "white_lotus_coverage", top: top?.title, ok });
+        if (!ok) issues.push({
+          severity: "P0", check: "coverage_guard", query: "white lotus",
+          expected: "White Lotus top-1, not Snow White / Thomas & Friends-style single-word match",
+          actual: top?.title || "—",
+          reason: "multi-token coverage guard not strong enough",
+          suggested_fix: "verify tryMeiliBranch coverage requireCoverage>=2 path",
+        });
+      }
+
+      // non_latin_display: scan a sample of docs to ensure card title is Latin
+      // when origin != yerli.
+      {
+        const sample = await searchMeili({ q: "", limit: 200, filter: "available_in_tr = true" }, cfg);
+        let bad = 0; const examples: any[] = [];
+        for (const h of sample.hits) {
+          if ((h as any).origin === "yerli") continue;
+          if (!isLatin(h.title || "")) {
+            bad++;
+            if (examples.length < 5) examples.push({ id: h.id, title: h.title, original_title: h.original_title, english_title: (h as any).english_title });
+          }
+        }
+        summary.push({ check: "non_latin_display", scanned: sample.hits.length, bad, examples });
+        if (bad > 0) issues.push({
+          severity: "P1", check: "non_latin_display", query: "(sample 200)",
+          expected: "0 foreign docs with non-Latin display title",
+          actual: `${bad} doc(s) still showing non-Latin title`,
+          reason: "pickDisplayTitle did not find a Latin candidate",
+          suggested_fix: "hydrate aliases (en TMDB translation / US alt_title) for affected docs; ensure pickDisplayTitle covers them",
+        });
+      }
+
+      // provider_badge: top-1 of goodfellas / friends has providers
+      for (const q of ["goodfellas", "friends"]) {
+        const hits = await runSearch(q, 1);
+        const top = hits[0];
+        const ok = top && (top.providers?.length ?? 0) > 0;
+        summary.push({ check: "provider_badge", query: q, providers: top?.providers, ok });
+        if (!ok) issues.push({
+          severity: "P1", check: "provider_badge", query: q,
+          expected: "≥1 provider slug on top-1",
+          actual: JSON.stringify(top?.providers || []),
+          reason: "top hit has no providers",
+          suggested_fix: "check content_availability row + sync joined providers correctly",
+        });
+      }
+
+      // typeahead_full_parity: short-form vs full-form parity on key queries
+      for (const q of ["friend", "good", "shre"]) {
+        const ta = await runSearch(q, 3);
+        const expectMap: Record<string, string> = { friend: "friends", good: "goodfellas", shre: "shrek" };
+        const expect = expectMap[q];
+        const ok = ta.some((h) => normalize(h.title || "").includes(expect));
+        summary.push({ check: "typeahead_parity", query: q, ok, top: ta[0]?.title });
+        if (!ok) issues.push({
+          severity: "P2", check: "typeahead_parity", query: q,
+          expected: `${expect} surfaces in top-3 for prefix`,
+          actual: ta[0]?.title || "—",
+          reason: "prefix match did not produce canonical hit",
+          suggested_fix: "verify Meili typo tolerance + prefix indexing on title/english_title",
+        });
+      }
+
+      const counts = {
+        P0: issues.filter(i => i.severity === "P0").length,
+        P1: issues.filter(i => i.severity === "P1").length,
+        P2: issues.filter(i => i.severity === "P2").length,
+      };
+      return json({ ok: true, action: "qa_audit", counts, issues, summary, ts: new Date().toISOString() });
+    }
+
+
+
 
     if (action === "reset_index") {
       // Delete the Meili index, recreate settings, reset our state row.

@@ -10,6 +10,11 @@ import {
   getExactAliasesForTitle,
   getFranchiseAliasesForTitle,
 } from "./aliases.ts";
+import {
+  pickDisplayTitle,
+  stripLeadingArticle,
+  type AliasMeta,
+} from "./display-title.ts";
 
 export interface MeiliConfig {
   host: string;

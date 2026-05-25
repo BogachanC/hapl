@@ -366,15 +366,45 @@ export function mapContentTitleToMeiliDocument(
   // ── Categorize aliases ────────────────────────────────────────────────
   // Manual exact aliases are looked up by the canonical title.
   const manualExact = getExactAliasesForTitle(titleText);
-  // Document-specific TR localized title joins exact_aliases so users can
-  // still find content by Türkçe ad. Deduped (case/diacritic insensitive).
+  // Document-specific exact aliases: include TR localized title, original
+  // title (when distinct from display), original_script_title, and the
+  // best English alias if different. These are document-bound, never global
+  // synonyms (so "sıkı dostlar" matches both GoodFellas and Friends docs
+  // but doesn't cross-pollinate in original-title queries like "goodfellas").
   const exactAliasesSet = new Map<string, string>();
-  for (const a of manualExact) exactAliasesSet.set(normalizeTitle(a), a);
-  if (localizedTitleTr) {
-    const k = normalizeTitle(localizedTitleTr);
-    if (k && !exactAliasesSet.has(k)) exactAliasesSet.set(k, localizedTitleTr);
+  const addExact = (v?: string | null) => {
+    if (!v) return;
+    const k = normalizeTitle(v);
+    if (!k || exactAliasesSet.has(k)) return;
+    exactAliasesSet.set(k, v);
+  };
+  for (const a of manualExact) addExact(a);
+  addExact(localizedTitleTr);
+  addExact(englishTitle);
+  if (rawOriginal && normalizeTitle(rawOriginal) !== normalizeTitle(titleText)) {
+    addExact(rawOriginal);
   }
+  if (originalScriptTitle) addExact(originalScriptTitle);
   const exactAliases = Array.from(exactAliasesSet.values());
+
+  // Article-stripped aliases: leading "the/a/an" stripped from any Latin
+  // title/alias, so "white lotus" matches "The White Lotus" exactly.
+  const articleStrippedSet = new Map<string, string>();
+  const addStripped = (v?: string | null) => {
+    if (!v) return;
+    const s = stripLeadingArticle(v);
+    if (!s) return;
+    const k = normalizeTitle(s);
+    if (!k || articleStrippedSet.has(k)) return;
+    // Don't duplicate an already-canonical normalized form.
+    if (k === normalizeTitle(titleText)) return;
+    articleStrippedSet.set(k, s);
+  };
+  addStripped(titleText);
+  addStripped(rawOriginal);
+  addStripped(englishTitle);
+  for (const a of manualExact) addStripped(a);
+  const articleStrippedAliases = Array.from(articleStrippedSet.values());
 
   const franchiseMatch = getFranchiseAliasesForTitle(titleText);
   const franchiseAliases = franchiseMatch?.variants ?? [];
@@ -382,9 +412,10 @@ export function mapContentTitleToMeiliDocument(
 
   // Move any DB aliases that are also exact/franchise/localized variants OUT of loose.
   const promoted = new Set<string>(
-    [...exactAliases, ...franchiseAliases].map((s) => normalizeTitle(s)),
+    [...exactAliases, ...franchiseAliases, ...articleStrippedAliases].map((s) => normalizeTitle(s)),
   );
   const looseAliases = aliasList.filter((a) => !promoted.has(normalizeTitle(a)));
+
 
 
   // ── Franchise / spin-off detection ───────────────────────────────────

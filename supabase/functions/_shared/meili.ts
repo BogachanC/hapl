@@ -70,20 +70,25 @@ async function meiliRequest<T = any>(
 // Attribute order is the ranking priority for the "attribute" ranking rule:
 // matches in earlier-listed attributes beat matches in later ones.
 //
-//   title              — canonical TR/primary title
+//   title              — canonical/original title (display title)
 //   exact_aliases      — same content in another language (Money Heist ↔ La Casa de Papel)
-//   original_title     — TMDB original-language title
+//                        + Türkçe localized title of THIS document (collision-safe:
+//                        document-specific, not a global synonym)
+//   localized_title_tr — Türkçe ad (also surfaced as alias, separate field for clarity)
+//   original_title     — TMDB original-language title (often same as title now)
 //   normalized_title   — diacritic-stripped form (yan yana / yanyana)
 //   franchise_aliases  — franchise siblings; only fires if user actually queried the franchise
 //   loose_aliases      — DB-collected aliases (countries, regional spellings)
 const SEARCHABLE_ATTRIBUTES = [
   "title",
   "exact_aliases",
+  "localized_title_tr",
   "original_title",
   "normalized_title",
   "franchise_aliases",
   "loose_aliases",
 ];
+
 
 const FILTERABLE_ATTRIBUTES = [
   "type",
@@ -196,8 +201,12 @@ export interface MeiliDoc {
   tmdb_id: number;
   type: "movie" | "tv";
   content_kind: string | null;
+  // Canonical / display title — original_title || title. This is what
+  // ContentCard renders. Türkçe localized form lives in localized_title_tr
+  // and exact_aliases (document-specific), never as a global synonym.
   title: string;
   original_title: string | null;
+  localized_title_tr: string | null;
   normalized_title: string;
   // Categorized alias buckets — see SEARCHABLE_ATTRIBUTES for priority.
   exact_aliases: string[];
@@ -225,6 +234,7 @@ export interface MeiliDoc {
   is_special: boolean;
   search_rank: number; // lower = more canonical
 }
+
 
 interface RawTitle {
   id: string;
@@ -313,18 +323,44 @@ export function mapContentTitleToMeiliDocument(
   const popularity = Number(meta.popularity) || 0;
   const updatedAtMs = title.updated_at ? new Date(title.updated_at).getTime() : Date.now();
 
+  // ── Display title policy ──────────────────────────────────────────────
+  // `title` in Meili = canonical/original (original_title || db.title).
+  // Türkçe localized version is kept as a document-specific alias only —
+  // never promoted to a global Meili synonym (that would cause cross-doc
+  // collisions like "goodfellas" matching Friends via the shared TR title
+  // "Sıkı Dostlar").
+  const rawDbTitle = (title.title || "").trim();
+  const rawOriginal = (title.original_title || "").trim();
+  const displayTitle = rawOriginal || rawDbTitle;
+  const localizedTitleTr =
+    rawDbTitle && normalizeTitle(rawDbTitle) !== normalizeTitle(displayTitle)
+      ? rawDbTitle
+      : null;
+  const titleText = displayTitle;
+
   // ── Categorize aliases ────────────────────────────────────────────────
-  const titleText = title.title || "";
-  const exactAliases = getExactAliasesForTitle(titleText);
+  // Manual exact aliases are looked up by the canonical title.
+  const manualExact = getExactAliasesForTitle(titleText);
+  // Document-specific TR localized title joins exact_aliases so users can
+  // still find content by Türkçe ad. Deduped (case/diacritic insensitive).
+  const exactAliasesSet = new Map<string, string>();
+  for (const a of manualExact) exactAliasesSet.set(normalizeTitle(a), a);
+  if (localizedTitleTr) {
+    const k = normalizeTitle(localizedTitleTr);
+    if (k && !exactAliasesSet.has(k)) exactAliasesSet.set(k, localizedTitleTr);
+  }
+  const exactAliases = Array.from(exactAliasesSet.values());
+
   const franchiseMatch = getFranchiseAliasesForTitle(titleText);
   const franchiseAliases = franchiseMatch?.variants ?? [];
   const franchiseKey = franchiseMatch?.franchiseKey ?? null;
 
-  // Move any DB aliases that are also exact/franchise variants OUT of loose.
+  // Move any DB aliases that are also exact/franchise/localized variants OUT of loose.
   const promoted = new Set<string>(
     [...exactAliases, ...franchiseAliases].map((s) => normalizeTitle(s)),
   );
   const looseAliases = aliasList.filter((a) => !promoted.has(normalizeTitle(a)));
+
 
   // ── Franchise / spin-off detection ───────────────────────────────────
   const normT = normalizeTitle(titleText);
@@ -406,8 +442,10 @@ export function mapContentTitleToMeiliDocument(
     type: title.tmdb_type,
     content_kind: title.content_kind,
     title: titleText,
-    original_title: title.original_title || null,
-    normalized_title: title.normalized_title || normalizeTitle(titleText),
+    original_title: rawOriginal || null,
+    localized_title_tr: localizedTitleTr,
+    normalized_title: normalizeTitle(titleText),
+
     exact_aliases: exactAliases,
     franchise_aliases: franchiseAliases,
     loose_aliases: looseAliases,

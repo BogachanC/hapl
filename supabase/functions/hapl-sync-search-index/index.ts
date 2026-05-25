@@ -326,6 +326,39 @@ serve(async (req) => {
       return json({ ok: true, results });
     }
 
+    // Read-only: inspect full Meili docs for given queries (debug/report)
+    if (action === "inspect_docs") {
+      const queries: string[] = Array.isArray(body?.queries) ? body.queries.map((q: any) => String(q)) : [];
+      const limit = Math.max(1, Math.min(5, Number(body?.limit) || 1));
+      const out: any[] = [];
+      for (const q of queries) {
+        try {
+          const r = await searchMeili({ q, limit }, cfg);
+          out.push({
+            q,
+            total: r.estimatedTotalHits,
+            hits: r.hits.map((h: any) => ({
+              id: h.id,
+              title: h.title,
+              original_title: h.original_title,
+              localized_title_tr: h.localized_title_tr,
+              exact_aliases: h.exact_aliases,
+              franchise_aliases: h.franchise_aliases,
+              providers: h.providers,
+              provider_names: h.provider_names,
+              year: h.year,
+              search_rank: h.search_rank,
+              is_special: h.is_special,
+              is_spin_off: h.is_spin_off,
+            })),
+          });
+        } catch (e: any) {
+          out.push({ q, error: e?.message || String(e) });
+        }
+      }
+      return json({ ok: true, results: out });
+    }
+
 
 
     if (action === "reset_index") {

@@ -660,7 +660,10 @@ serve(async (req) => {
     const mode: "typeahead" | "full" = rawMode === "typeahead" ? "typeahead" : "full";
 
     const baseKey = cacheKey(query);
-    const key = `${baseKey}:${categoryFilter ?? "all"}:${providerSlug ?? "all"}:${mode}`;
+    // v2: display title is now canonical (original_title || title).
+    // Bumping the version invalidates pre-policy cached entries without DB churn.
+    const key = `v2:${baseKey}:${categoryFilter ?? "all"}:${providerSlug ?? "all"}:${mode}`;
+
 
     // Background scheduler — survives past response.
     const ert: any = (globalThis as any).EdgeRuntime;

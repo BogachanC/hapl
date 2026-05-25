@@ -355,7 +355,35 @@ export async function searchTitlesInDb(
   const aliasGroup = getAliasGroupMembers(rawQuery);
   const requireAvailable = opts.requireAvailable !== false;
 
-  const results: DbContentResultOut[] = [];
+  // Fetch aliases for the filtered titles so pickDisplayTitle has English /
+  // localized-TR / original-script variants for non-Latin display selection.
+  const movieIdsF = filteredTitles.filter((t) => t.tmdb_type === "movie").map((t) => Number(t.tmdb_id));
+  const tvIdsF = filteredTitles.filter((t) => t.tmdb_type === "tv").map((t) => Number(t.tmdb_id));
+  const aliasMetaByKey = new Map<string, AliasMeta[]>();
+  const aliasTasksF: Promise<any>[] = [];
+  if (movieIdsF.length > 0) {
+    aliasTasksF.push(
+      sb.from("content_title_aliases")
+        .select("tmdb_id, tmdb_type, alias, source, language, country")
+        .eq("tmdb_type", "movie").in("tmdb_id", movieIdsF),
+    );
+  }
+  if (tvIdsF.length > 0) {
+    aliasTasksF.push(
+      sb.from("content_title_aliases")
+        .select("tmdb_id, tmdb_type, alias, source, language, country")
+        .eq("tmdb_type", "tv").in("tmdb_id", tvIdsF),
+    );
+  }
+  const aliasResF = await Promise.all(aliasTasksF);
+  for (const r of aliasResF) {
+    for (const row of r.data || []) {
+      const k = `${row.tmdb_type}:${row.tmdb_id}`;
+      const arr = aliasMetaByKey.get(k) || [];
+      arr.push({ alias: row.alias, source: row.source ?? null, language: row.language ?? null, country: row.country ?? null });
+      aliasMetaByKey.set(k, arr);
+    }
+  }
   for (const t of filteredTitles) {
     const cand = candidates.get(`${t.tmdb_type}:${t.tmdb_id}`);
     if (!cand) continue;

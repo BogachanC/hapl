@@ -444,11 +444,15 @@ export async function searchTitlesInDb(
     const voteCount = Number(meta.vote_count) || 0;
     const origin = deriveOriginFromMeta(meta, meta.original_language || null);
 
+    // Display = canonical/original. Türkçe localized form stays searchable
+    // via aliases but is never shown on the card.
+    const displayTitle = (t.original_title || "").trim() || t.title;
     results.push({
       id: Number(t.tmdb_id),
       type: t.tmdb_type as "movie" | "tv",
-      title: t.title,
+      title: displayTitle,
       year: t.release_year ?? null,
+
       overview: t.overview || "",
       poster: tmdbImage(t.poster_path, "w500"),
       backdrop: tmdbImage(t.backdrop_path, "w780"),

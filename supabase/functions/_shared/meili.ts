@@ -70,20 +70,25 @@ async function meiliRequest<T = any>(
 // Attribute order is the ranking priority for the "attribute" ranking rule:
 // matches in earlier-listed attributes beat matches in later ones.
 //
-//   title              — canonical TR/primary title
+//   title              — canonical/original title (display title)
 //   exact_aliases      — same content in another language (Money Heist ↔ La Casa de Papel)
-//   original_title     — TMDB original-language title
+//                        + Türkçe localized title of THIS document (collision-safe:
+//                        document-specific, not a global synonym)
+//   localized_title_tr — Türkçe ad (also surfaced as alias, separate field for clarity)
+//   original_title     — TMDB original-language title (often same as title now)
 //   normalized_title   — diacritic-stripped form (yan yana / yanyana)
 //   franchise_aliases  — franchise siblings; only fires if user actually queried the franchise
 //   loose_aliases      — DB-collected aliases (countries, regional spellings)
 const SEARCHABLE_ATTRIBUTES = [
   "title",
   "exact_aliases",
+  "localized_title_tr",
   "original_title",
   "normalized_title",
   "franchise_aliases",
   "loose_aliases",
 ];
+
 
 const FILTERABLE_ATTRIBUTES = [
   "type",

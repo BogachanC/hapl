@@ -343,20 +343,25 @@ export function mapContentTitleToMeiliDocument(
   const popularity = Number(meta.popularity) || 0;
   const updatedAtMs = title.updated_at ? new Date(title.updated_at).getTime() : Date.now();
 
-  // ── Display title policy ──────────────────────────────────────────────
-  // `title` in Meili = canonical/original (original_title || db.title).
-  // Türkçe localized version is kept as a document-specific alias only —
-  // never promoted to a global Meili synonym (that would cause cross-doc
-  // collisions like "goodfellas" matching Friends via the shared TR title
-  // "Sıkı Dostlar").
-  const rawDbTitle = (title.title || "").trim();
+  // ── Display title policy v2 ───────────────────────────────────────────
+  // Generic, catalog-wide rules (display-title.ts):
+  //   • Turkish productions → Turkish title.
+  //   • Foreign Latin       → original_title.
+  //   • Foreign non-Latin   → English alias, then any Latin candidate.
+  // Türkçe localized titles + non-Latin originals stay as hidden aliases.
+  const aliasMeta: AliasMeta[] = aliases.map((a) => ({
+    alias: a.alias,
+    source: a.source ?? null,
+    language: a.language ?? null,
+    country: a.country ?? null,
+  }));
+  const picked = pickDisplayTitle(title.title, title.original_title, aliasMeta, meta);
+  const titleText = picked.display || title.title || title.original_title || "";
   const rawOriginal = (title.original_title || "").trim();
-  const displayTitle = rawOriginal || rawDbTitle;
-  const localizedTitleTr =
-    rawDbTitle && normalizeTitle(rawDbTitle) !== normalizeTitle(displayTitle)
-      ? rawDbTitle
-      : null;
-  const titleText = displayTitle;
+  const localizedTitleTr = picked.localized_tr;
+  const englishTitle = picked.english;
+  const originalScriptTitle = picked.original_script;
+
 
   // ── Categorize aliases ────────────────────────────────────────────────
   // Manual exact aliases are looked up by the canonical title.

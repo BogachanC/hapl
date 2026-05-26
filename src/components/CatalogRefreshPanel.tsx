@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { Loader2, RefreshCw, Zap } from "lucide-react";
+import { Loader2, RefreshCw, Zap, Compass } from "lucide-react";
 import { toast } from "sonner";
+
 
 type RunRow = {
   id: string;

@@ -327,6 +327,8 @@ export async function searchTitlesInDb(
     : titles;
   if (filteredTitles.length === 0) return { results: [], topScore: 0 };
 
+  const titleUuids = filteredTitles.map((t) => t.id);
+
   // Apply shared TR eligibility filter so DB fallback agrees with
   // sync_dirty_titles, full Meili sync, and home feed: tombstoned /
   // rent-only / buy-only / low-confidence titles are excluded.

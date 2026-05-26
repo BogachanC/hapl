@@ -934,6 +934,306 @@ serve(async (req: Request) => {
     }
   }
 
+  // ─── Phase 6: Incremental Provider Discovery ────────────────────────────
+  // Single-call delta job. Targets ONE (provider, media_type, sort_by) for
+  // page_limit pages. Verifies each candidate against TMDB /watch/providers
+  // TR before writing. Defaults to dry_run=true. Writes a catalog_job_runs
+  // row for visibility. Manual override / provider_rule / firecrawl rows
+  // are never overwritten. New/changed titles are enqueued to dirty queue.
+  if (action === "provider_discovery_delta") {
+    const DISCOVERY_DELTA_ALLOWED = new Set([
+      "netflix", "amazon-prime-video", "max", "disney-plus", "mubi",
+      "tv-plus", "tod-tv", "tabii", "gain", "puhutv", "exxen", "bein-connect",
+    ]);
+    const ALLOWED_SORTS = new Set([
+      "popularity.desc", "release_date.desc", "first_air_date.desc",
+      "primary_release_date.desc", "vote_count.desc", "vote_average.desc",
+    ]);
+
+    const providerSlug = String(body.provider_slug || "").trim();
+    const mediaType = body.media_type === "tv" ? "tv" : body.media_type === "movie" ? "movie" : null;
+    let sortBy = String(body.sort_by || "popularity.desc").trim();
+    const pageLimit = Math.max(1, Math.min(5, Number(body.page_limit) || 1));
+    const dryRun = body.dry_run !== false; // default true
+    const voteCountFloor = Math.max(0, Number(body.vote_count_floor) || 0);
+    const recentYearFrom = Number(body.recent_year_from) || 0;
+
+    if (!DISCOVERY_DELTA_ALLOWED.has(providerSlug)) {
+      return new Response(JSON.stringify({ ok: false, error: `provider_slug must be one of: ${[...DISCOVERY_DELTA_ALLOWED].join(", ")}` }), {
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    if (!mediaType) {
+      return new Response(JSON.stringify({ ok: false, error: "media_type must be 'movie' or 'tv'" }), {
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    if (!ALLOWED_SORTS.has(sortBy)) {
+      return new Response(JSON.stringify({ ok: false, error: `sort_by must be one of: ${[...ALLOWED_SORTS].join(", ")}` }), {
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    // Normalize release_date.desc per media type
+    if (sortBy === "release_date.desc") {
+      sortBy = mediaType === "movie" ? "primary_release_date.desc" : "first_air_date.desc";
+    }
+
+    const target = TMDB_PROVIDERS_TR.find((p) => p.slug === providerSlug);
+    if (!target?.tmdb_id) {
+      return new Response(JSON.stringify({ ok: false, error: `no tmdb_provider_id mapping for ${providerSlug}` }), {
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const providers = await loadProviders(sb);
+    if (providers.length === 0) {
+      return new Response(JSON.stringify({ ok: false, error: "no providers configured" }), {
+        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Job-run row (always record)
+    const runStart = new Date().toISOString();
+    const runIns = await sb.from("catalog_job_runs").insert({
+      job_name: "provider_discovery_delta",
+      payload: { provider_slug: providerSlug, tmdb_provider_id: target.tmdb_id, media_type: mediaType, sort_by: sortBy, page_limit: pageLimit, dry_run: dryRun, vote_count_floor: voteCountFloor, recent_year_from: recentYearFrom },
+    }).select("id").maybeSingle();
+    const runId = runIns.data?.id as string | undefined;
+
+    // Inline dirty enqueue (mirrors hapl-refresh helper).
+    const enqueueDirty = async (titleId: string, reason: string, meta: Record<string, unknown>) => {
+      const ins = await sb.from("catalog_dirty_titles").insert({ title_id: titleId, reason, metadata: meta });
+      if (!ins.error) return;
+      if ((ins.error as any)?.code !== "23505") return;
+      const { data: open } = await sb.from("catalog_dirty_titles")
+        .select("id, reason, metadata").eq("title_id", titleId)
+        .is("processed_at", null).limit(1).maybeSingle();
+      if (!open) return;
+      const reasons = new Set<string>(Array.isArray((open.metadata as any)?.reasons) ? (open.metadata as any).reasons : [open.reason]);
+      reasons.add(reason);
+      await sb.from("catalog_dirty_titles").update({
+        reason, metadata: { ...(open.metadata || {}), ...meta, reasons: [...reasons] },
+        enqueued_at: new Date().toISOString(),
+      }).eq("id", open.id);
+    };
+
+    const counters = {
+      scanned: 0, verified: 0, inserted_titles: 0, updated_titles: 0,
+      availability_rows: 0, aliases_added: 0, dirty_enqueued: 0,
+      skipped_no_poster: 0, skipped_unverified: 0,
+      skipped_override_guard: 0, skipped_protected_source: 0,
+      failed: 0,
+    };
+    const candidates: any[] = []; // for dry-run summary
+    let lastError: string | null = null;
+    let chunkErr: string | null = null;
+
+    try {
+      for (let page = 1; page <= pageLimit; page++) {
+        const opts: any = {
+          type: mediaType, page,
+          withWatchProviders: [target.tmdb_id], watchRegion: "TR",
+          sortBy, voteCountGte: voteCountFloor || undefined,
+        };
+        if (sortBy.startsWith("primary_release_date") || sortBy.startsWith("first_air_date")) {
+          opts.voteCountGte = Math.max(opts.voteCountGte || 0, 5);
+          if (recentYearFrom) opts.releaseDateGte = `${recentYearFrom}-01-01`;
+        } else if (sortBy === "vote_average.desc") {
+          opts.voteCountGte = Math.max(opts.voteCountGte || 0, 50);
+        }
+
+        let discoverRes;
+        try {
+          discoverRes = await tmdbDiscover(opts);
+        } catch (e: any) {
+          lastError = `discover p${page}: ${e?.message || "unknown"}`;
+          counters.failed++;
+          break;
+        }
+
+        for (const item of discoverRes.results) {
+          counters.scanned++;
+          if (!item.poster_path) { counters.skipped_no_poster++; continue; }
+
+          let detail, watch;
+          try {
+            [detail, watch] = await Promise.all([
+              tmdbDetail(item.media_type, item.id),
+              tmdbWatchProvidersTR(item.media_type, item.id),
+            ]);
+          } catch (e: any) {
+            counters.failed++; lastError = e?.message || "detail/watch failed"; continue;
+          }
+          if (!detail) { counters.failed++; continue; }
+
+          // Verify TMDB provider TR
+          const allBuckets = [
+            ...(watch.flatrate || []), ...(watch.free || []), ...(watch.ads || []),
+            ...(watch.rent || []), ...(watch.buy || []),
+          ];
+          const verified = allBuckets.some((wp: any) => wp.provider_id === target.tmdb_id);
+          if (!verified) { counters.skipped_unverified++; continue; }
+          counters.verified++;
+
+          if (dryRun) {
+            if (candidates.length < 50) {
+              candidates.push({
+                tmdb_id: detail.id, tmdb_type: item.media_type,
+                title: detail.title, year: detail.release_date?.slice(0, 4) || null,
+              });
+            }
+            continue;
+          }
+
+          const nowIso = new Date().toISOString();
+          const { data: existingTitle } = await sb.from("content_titles").select("id")
+            .eq("tmdb_id", detail.id).eq("tmdb_type", item.media_type).maybeSingle();
+          const wasNew = !existingTitle;
+
+          const titleRow = {
+            tmdb_id: detail.id, tmdb_type: item.media_type,
+            title: detail.title, original_title: detail.original_title || null,
+            normalized_title: normalizeTitle(detail.title),
+            release_year: detail.release_date ? new Date(detail.release_date).getFullYear() : null,
+            first_release_date: detail.release_date || null,
+            poster_path: detail.poster_path, backdrop_path: detail.backdrop_path,
+            overview: detail.overview,
+            genres: (detail.genres || []).map((g: any) => g.name),
+            content_kind: deriveContentKind(item.media_type, detail.genres || []),
+            metadata: {
+              vote_average: detail.vote_average, vote_count: detail.vote_count,
+              popularity: item.popularity, seeded_via: "provider_discovery_delta",
+            },
+            last_tmdb_sync_at: nowIso, last_full_sync_at: nowIso,
+          };
+          const { data: titleData, error: titleErr } = await sb.from("content_titles")
+            .upsert(titleRow, { onConflict: "tmdb_id,tmdb_type" }).select("id").maybeSingle();
+          if (titleErr || !titleData?.id) {
+            counters.failed++; lastError = titleErr?.message || "title upsert failed"; continue;
+          }
+          const titleId = titleData.id;
+          if (wasNew) counters.inserted_titles++; else counters.updated_titles++;
+
+          // Manual override guard
+          const { data: ov } = await sb.from("manual_availability_overrides")
+            .select("provider_id, effective_until").eq("title_id", titleId)
+            .lte("effective_from", nowIso);
+          const overrideProviderIds = new Set<string>();
+          for (const o of (ov || [])) {
+            if (o.effective_until && o.effective_until <= nowIso) continue;
+            if (o.provider_id) overrideProviderIds.add(o.provider_id);
+          }
+
+          // Build candidate availability rows from TR buckets
+          const bucketRows: any[] = [];
+          const seenKey = new Set<string>();
+          const bucketDefs: Array<{ type: string; list: any[] }> = [
+            { type: "stream", list: watch.flatrate }, { type: "free", list: watch.free },
+            { type: "ads", list: watch.ads }, { type: "rent", list: watch.rent },
+            { type: "buy", list: watch.buy },
+          ];
+          for (const b of bucketDefs) {
+            for (const wp of b.list || []) {
+              const matched = matchTmdbProvider(wp.provider_name, providers);
+              if (!matched) continue;
+              if (overrideProviderIds.has(matched.id)) { counters.skipped_override_guard++; continue; }
+              const k = `${matched.id}::${b.type}`;
+              if (seenKey.has(k)) continue;
+              seenKey.add(k);
+              bucketRows.push({
+                title_id: titleId, provider_id: matched.id, region: "TR",
+                availability_type: b.type, status: "available", source: "tmdb",
+                confidence: tmdbConfidenceFor(b.type), checked_at: nowIso, last_seen_at: nowIso,
+                raw_payload: { provider_id: wp.provider_id, provider_name: wp.provider_name, via: "provider_discovery_delta" },
+              });
+            }
+          }
+
+          if (bucketRows.length > 0) {
+            // Protected-source guard: skip rows whose existing record is
+            // manual/provider_rule/firecrawl (non-tmdb). Only upsert over
+            // tmdb-sourced or missing rows.
+            const { data: existingAvail } = await sb.from("content_availability")
+              .select("provider_id, availability_type, source")
+              .eq("title_id", titleId).eq("region", "TR")
+              .in("provider_id", Array.from(new Set(bucketRows.map((r) => r.provider_id))));
+            const protectedKeys = new Set<string>();
+            for (const r of existingAvail || []) {
+              if (r.source && r.source !== "tmdb") {
+                protectedKeys.add(`${r.provider_id}::${r.availability_type}`);
+              }
+            }
+            const writable = bucketRows.filter((r) => {
+              if (protectedKeys.has(`${r.provider_id}::${r.availability_type}`)) {
+                counters.skipped_protected_source++; return false;
+              }
+              return true;
+            });
+            if (writable.length > 0) {
+              const { error: availErr } = await sb.from("content_availability")
+                .upsert(writable, { onConflict: "title_id,provider_id,region,availability_type" });
+              if (availErr) {
+                counters.failed++; lastError = availErr.message;
+              } else {
+                counters.availability_rows += writable.length;
+              }
+            }
+          }
+
+          // Alias hydration
+          try {
+            if (await needsHydration(sb, detail.id, item.media_type)) {
+              const added = await hydrateAliases(sb, detail.id, item.media_type, detail);
+              counters.aliases_added += added;
+            }
+          } catch (_) { /* swallow */ }
+
+          // Enqueue dirty when title is new or availability rows were touched
+          if (wasNew || counters.availability_rows > 0 || counters.aliases_added > 0) {
+            try {
+              await enqueueDirty(titleId, wasNew ? "title_upserted" : "availability_changed", {
+                source: "provider_discovery_delta", provider_slug: providerSlug, media_type: mediaType,
+              });
+              counters.dirty_enqueued++;
+            } catch (_) { /* swallow */ }
+          }
+
+          await new Promise((r) => setTimeout(r, 60)); // be polite to TMDB
+        }
+        if (page > (discoverRes.total_pages || 0)) break;
+      }
+    } catch (e: any) {
+      chunkErr = e?.message || "unknown chunk error";
+    }
+
+    const finishedAt = new Date().toISOString();
+    const ok = !chunkErr;
+    if (runId) {
+      await sb.from("catalog_job_runs").update({
+        finished_at: finishedAt, ok,
+        processed: counters.scanned,
+        changed: counters.inserted_titles + counters.updated_titles,
+        dirty_enqueued: counters.dirty_enqueued,
+        override_skips: counters.skipped_override_guard,
+        failed: counters.failed,
+        last_error: chunkErr || lastError,
+        payload: {
+          provider_slug: providerSlug, tmdb_provider_id: target.tmdb_id,
+          media_type: mediaType, sort_by: sortBy, page_limit: pageLimit, dry_run: dryRun,
+          counters,
+        },
+      }).eq("id", runId);
+    }
+
+    return new Response(JSON.stringify({
+      ok, dry_run: dryRun, run_id: runId, started_at: runStart, finished_at: finishedAt,
+      provider_slug: providerSlug, tmdb_provider_id: target.tmdb_id,
+      media_type: mediaType, sort_by: sortBy, page_limit: pageLimit,
+      counters, candidates_sample: dryRun ? candidates : undefined,
+      error: chunkErr || lastError || null,
+    }, null, 2), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+
   const providers = await loadProviders(sb);
   if (providers.length === 0) {
     return new Response(JSON.stringify({ ok: false, error: "no providers configured" }), {

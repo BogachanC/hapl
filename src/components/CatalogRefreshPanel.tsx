@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { Loader2, RefreshCw, Zap } from "lucide-react";
+import { Loader2, RefreshCw, Zap, Compass } from "lucide-react";
 import { toast } from "sonner";
+
 
 type RunRow = {
   id: string;
@@ -36,12 +37,21 @@ export const CatalogRefreshPanel = () => {
   const [runs, setRuns] = useState<RunRow[]>([]);
   const [lock, setLock] = useState<LockRow | null>(null);
   const [dirty, setDirty] = useState<DirtyStats | null>(null);
+  const [discoveryRuns, setDiscoveryRuns] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [processing, setProcessing] = useState(false);
+  const [discovering, setDiscovering] = useState(false);
+  const [dProvider, setDProvider] = useState("netflix");
+  const [dMedia, setDMedia] = useState<"movie" | "tv">("movie");
+  const [dSort, setDSort] = useState("popularity.desc");
+  const [dPages, setDPages] = useState(1);
+  const [dDryRun, setDDryRun] = useState(true);
+  const [lastDiscovery, setLastDiscovery] = useState<any>(null);
+
 
   const load = async () => {
     setLoading(true);
-    const [{ data: r }, { data: l }, dirtyRes] = await Promise.all([
+    const [{ data: r }, { data: l }, dirtyRes, { data: dr }] = await Promise.all([
       supabase
         .from("catalog_job_runs")
         .select("*")
@@ -54,12 +64,20 @@ export const CatalogRefreshPanel = () => {
         .eq("lock_name", "hapl_refresh")
         .maybeSingle(),
       supabase.functions.invoke("hapl-sync-search-index", { body: { action: "dirty_stats" } }),
+      supabase
+        .from("catalog_job_runs")
+        .select("*")
+        .eq("job_name", "provider_discovery_delta")
+        .order("started_at", { ascending: false })
+        .limit(8),
     ]);
     setRuns((r as RunRow[]) || []);
     setLock((l as LockRow | null) || null);
     if (dirtyRes.data?.ok) setDirty(dirtyRes.data as DirtyStats);
+    setDiscoveryRuns((dr as any[]) || []);
     setLoading(false);
   };
+
 
   useEffect(() => {
     load();
@@ -81,6 +99,37 @@ export const CatalogRefreshPanel = () => {
       setProcessing(false);
     }
   };
+
+  const runDiscovery = async () => {
+    setDiscovering(true);
+    setLastDiscovery(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("hapl-seed-catalog", {
+        body: {
+          action: "provider_discovery_delta",
+          provider_slug: dProvider,
+          media_type: dMedia,
+          sort_by: dSort,
+          page_limit: dPages,
+          dry_run: dDryRun,
+        },
+      });
+      if (error) throw error;
+      if (!data?.ok) throw new Error(data?.error || "discovery failed");
+      setLastDiscovery(data);
+      const c = data.counters || {};
+      toast.success(
+        `${dDryRun ? "Dry-run" : "Apply"} · scanned=${c.scanned} verified=${c.verified} ` +
+        (dDryRun ? "" : `inserted=${c.inserted_titles} updated=${c.updated_titles} dirty=${c.dirty_enqueued}`),
+      );
+      await load();
+    } catch (e: any) {
+      toast.error("Discovery hatası: " + (e.message || "bilinmeyen"));
+    } finally {
+      setDiscovering(false);
+    }
+  };
+
 
   const lockActive = lock && new Date(lock.expires_at) > new Date();
   const last = runs[0];
@@ -146,9 +195,114 @@ export const CatalogRefreshPanel = () => {
           ))}
         </div>
       </div>
+
+      {/* ─── Phase 6: Provider Discovery ──────────────────────────── */}
+      <div className="rounded-md border border-border/60 p-3 space-y-3">
+        <div className="flex items-center gap-2">
+          <Compass className="w-4 h-4 text-muted-foreground" />
+          <h3 className="text-sm font-medium">Provider Discovery (delta)</h3>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+          <label className="flex flex-col gap-1">
+            <span className="text-muted-foreground">Provider</span>
+            <select className="bg-background border border-border rounded px-2 py-1" value={dProvider} onChange={(e) => setDProvider(e.target.value)}>
+              <option value="netflix">Netflix</option>
+              <option value="disney-plus">Disney+</option>
+              <option value="amazon-prime-video">Amazon Prime</option>
+              <option value="max">HBO Max</option>
+              <option value="mubi">MUBI</option>
+              <option value="tv-plus">TV+</option>
+              <option value="tod-tv">TOD TV</option>
+              <option value="tabii">tabii</option>
+              <option value="gain">GAIN</option>
+              <option value="puhutv">PuhuTV</option>
+              <option value="exxen">EXXEN</option>
+              <option value="bein-connect">beIN CONNECT</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-muted-foreground">Media</span>
+            <select className="bg-background border border-border rounded px-2 py-1" value={dMedia} onChange={(e) => setDMedia(e.target.value as "movie" | "tv")}>
+              <option value="movie">movie</option>
+              <option value="tv">tv</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-muted-foreground">Sort</span>
+            <select className="bg-background border border-border rounded px-2 py-1" value={dSort} onChange={(e) => setDSort(e.target.value)}>
+              <option value="popularity.desc">popularity.desc</option>
+              <option value="release_date.desc">release_date.desc</option>
+              <option value="vote_count.desc">vote_count.desc</option>
+              <option value="vote_average.desc">vote_average.desc</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-muted-foreground">Pages (1–5)</span>
+            <input type="number" min={1} max={5} className="bg-background border border-border rounded px-2 py-1" value={dPages} onChange={(e) => setDPages(Math.max(1, Math.min(5, Number(e.target.value) || 1)))} />
+          </label>
+        </div>
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-2 text-xs">
+            <input type="checkbox" checked={dDryRun} onChange={(e) => setDDryRun(e.target.checked)} />
+            Dry-run (no writes)
+          </label>
+          <Button size="sm" variant={dDryRun ? "secondary" : "default"} onClick={runDiscovery} disabled={discovering} className="gap-1">
+            {discovering ? <Loader2 className="w-3 h-3 animate-spin" /> : <Compass className="w-3 h-3" />}
+            {dDryRun ? "Run dry-run" : "Apply discovery"}
+          </Button>
+        </div>
+
+        {lastDiscovery?.counters && (
+          <div className="text-xs space-y-1">
+            <div className="font-mono text-muted-foreground">
+              scanned={lastDiscovery.counters.scanned} verified={lastDiscovery.counters.verified}
+              {!lastDiscovery.dry_run && (
+                <> · inserted={lastDiscovery.counters.inserted_titles} updated={lastDiscovery.counters.updated_titles} avail={lastDiscovery.counters.availability_rows} dirty={lastDiscovery.counters.dirty_enqueued} aliases={lastDiscovery.counters.aliases_added}</>
+              )}
+              {" · "}skip(noPoster)={lastDiscovery.counters.skipped_no_poster} skip(unverified)={lastDiscovery.counters.skipped_unverified}
+              {!lastDiscovery.dry_run && <> skip(override)={lastDiscovery.counters.skipped_override_guard} skip(protected)={lastDiscovery.counters.skipped_protected_source}</>}
+              {" · "}failed={lastDiscovery.counters.failed}
+            </div>
+            {lastDiscovery.dry_run && Array.isArray(lastDiscovery.candidates_sample) && lastDiscovery.candidates_sample.length > 0 && (
+              <details className="text-xs">
+                <summary className="cursor-pointer text-muted-foreground">Candidates ({lastDiscovery.candidates_sample.length})</summary>
+                <ul className="pl-3 mt-1 space-y-0.5 max-h-40 overflow-y-auto">
+                  {lastDiscovery.candidates_sample.map((c: any) => (
+                    <li key={`${c.tmdb_type}-${c.tmdb_id}`} className="text-muted-foreground">
+                      {c.tmdb_type} #{c.tmdb_id} · {c.title} {c.year ? `(${c.year})` : ""}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </div>
+        )}
+
+        <div className="space-y-1">
+          <h4 className="text-[11px] uppercase text-muted-foreground">Recent discovery runs</h4>
+          <div className="text-xs space-y-1 max-h-48 overflow-y-auto">
+            {discoveryRuns.length === 0 && <p className="text-muted-foreground">Henüz discovery run yok.</p>}
+            {discoveryRuns.map((r: any) => {
+              const p = r.payload || {};
+              const c = p.counters || {};
+              return (
+                <div key={r.id} className="flex items-center justify-between border-b border-border/40 py-1 gap-2">
+                  <span className="text-muted-foreground truncate">
+                    {new Date(r.started_at).toLocaleString("tr-TR")} · {p.provider_slug}/{p.media_type}/{p.sort_by} p={p.page_limit}{p.dry_run ? " · dry" : ""}
+                  </span>
+                  <span className={r.ok ? "text-emerald-500" : "text-destructive"}>
+                    s={c.scanned ?? r.processed} v={c.verified ?? "-"} ins={c.inserted_titles ?? "-"} upd={c.updated_titles ?? "-"} f={r.failed}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
     </section>
   );
 };
+
 
 const Stat = ({ label, value, tone = "muted" }: { label: string; value: string; tone?: "ok" | "warn" | "err" | "muted" }) => {
   const color =

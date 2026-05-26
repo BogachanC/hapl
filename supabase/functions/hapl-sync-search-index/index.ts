@@ -30,6 +30,12 @@ import {
   waitForTask,
   type MeiliDoc,
 } from "../_shared/meili.ts";
+import {
+  ELIGIBLE_AVAILABILITY_TYPES,
+  ELIGIBLE_MIN_CONFIDENCE,
+  applyEligibilityFilter,
+  isEligibleAvail,
+} from "../_shared/eligibility.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -42,25 +48,6 @@ const corsHeaders = {
 const DEFAULT_BATCH_SIZE = 100;
 const MAX_BATCH_SIZE = 200;
 
-// ─── Eligibility (single source of truth) ────────────────────────────────
-// A title is "eligible" to be visible in public search when it has at least
-// one TR availability row that is:
-//   • status = 'available'
-//   • availability_type ∈ ELIGIBLE_AVAILABILITY_TYPES
-//   • confidence >= ELIGIBLE_MIN_CONFIDENCE
-// Source (tmdb/manual/provider_rule/firecrawl) is NOT considered — any
-// available row from any source keeps the title eligible. This matches the
-// Faz 1 override guard: manual / provider_rule / firecrawl rows protect the
-// title even when TMDB refresh would otherwise mark it stale.
-const ELIGIBLE_AVAILABILITY_TYPES = ["stream", "free", "ads"] as const;
-const ELIGIBLE_MIN_CONFIDENCE = 0.5;
-
-function isEligibleAvail(a: { status: string; availability_type: string; confidence: number | null }): boolean {
-  if (a.status !== "available") return false;
-  if (!(ELIGIBLE_AVAILABILITY_TYPES as readonly string[]).includes(a.availability_type)) return false;
-  const c = typeof a.confidence === "number" ? a.confidence : 0;
-  return c >= ELIGIBLE_MIN_CONFIDENCE;
-}
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {

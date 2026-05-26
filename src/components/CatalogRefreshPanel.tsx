@@ -100,6 +100,37 @@ export const CatalogRefreshPanel = () => {
     }
   };
 
+  const runDiscovery = async () => {
+    setDiscovering(true);
+    setLastDiscovery(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("hapl-seed-catalog", {
+        body: {
+          action: "provider_discovery_delta",
+          provider_slug: dProvider,
+          media_type: dMedia,
+          sort_by: dSort,
+          page_limit: dPages,
+          dry_run: dDryRun,
+        },
+      });
+      if (error) throw error;
+      if (!data?.ok) throw new Error(data?.error || "discovery failed");
+      setLastDiscovery(data);
+      const c = data.counters || {};
+      toast.success(
+        `${dDryRun ? "Dry-run" : "Apply"} · scanned=${c.scanned} verified=${c.verified} ` +
+        (dDryRun ? "" : `inserted=${c.inserted_titles} updated=${c.updated_titles} dirty=${c.dirty_enqueued}`),
+      );
+      await load();
+    } catch (e: any) {
+      toast.error("Discovery hatası: " + (e.message || "bilinmeyen"));
+    } finally {
+      setDiscovering(false);
+    }
+  };
+
+
   const lockActive = lock && new Date(lock.expires_at) > new Date();
   const last = runs[0];
 

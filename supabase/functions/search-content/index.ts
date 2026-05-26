@@ -987,12 +987,17 @@ serve(async (req) => {
       return false;
     });
     filtered.sort((a, b) => b.finalScore - a.finalScore);
-    const sortedResults = filtered.map((s) => s.r);
+    // Faz 5: drop TMDB-fallback entries that are not TR-eligible. Meili and
+    // DB-search branches already filter by shared eligibility; this strips
+    // tombstoned / unavailable titles that the TMDB enrichment path may have
+    // surfaced (e.g. Jimmy Neutron: Boy Genius with no TR providers).
+    const sortedResults = filtered.map((s) => s.r).filter((r) => r.available_in_tr);
 
-    const trAvailable = sortedResults.filter((r) => r.available_in_tr);
+    const trAvailable = sortedResults;
     if (trAvailable.length > 0) {
       writeToCache(sb, key, sortedResults).catch((e) => console.error("cache write:", e));
     }
+
 
     const source: "tmdb_fallback" | "mixed" =
       dbHit.results.length > 0 && tmdbResults.length > 0 ? "mixed" : "tmdb_fallback";

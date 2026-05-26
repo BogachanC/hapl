@@ -12,6 +12,8 @@ import { normalizeTitle, meaningfulTokens, splitQueryTokens, compactNormalizeTit
 import { getAliasGroupMembers } from "./aliases.ts";
 import { tmdbImage } from "./tmdb.ts";
 import { pickDisplayTitle, type AliasMeta } from "./display-title.ts";
+import { applyEligibilityFilter, isEligibleAvail } from "./eligibility.ts";
+
 
 export interface DbPlatformOut {
   id?: number;
@@ -326,14 +328,17 @@ export async function searchTitlesInDb(
   if (filteredTitles.length === 0) return { results: [], topScore: 0 };
 
   const titleUuids = filteredTitles.map((t) => t.id);
-  const { data: availRows } = await sb
-    .from("content_availability")
-    .select(
-      "title_id, provider_id, region, availability_type, status, source, source_url, confidence",
-    )
-    .in("title_id", titleUuids)
-    .eq("region", "TR")
-    .eq("status", "available");
+
+  // Apply shared TR eligibility filter so DB fallback agrees with
+  // sync_dirty_titles, full Meili sync, and home feed: tombstoned /
+  // rent-only / buy-only / low-confidence titles are excluded.
+  const { data: availRows } = await applyEligibilityFilter(
+    sb.from("content_availability")
+      .select(
+        "title_id, provider_id, region, availability_type, status, source, source_url, confidence",
+      ),
+  ).in("title_id", titleUuids);
+
 
   const providerIds = Array.from(new Set((availRows || []).map((a: any) => a.provider_id)));
   let providerMap = new Map<string, any>();
@@ -347,10 +352,12 @@ export async function searchTitlesInDb(
 
   const availByTitle = new Map<string, any[]>();
   for (const a of availRows || []) {
+    if (!isEligibleAvail(a as any)) continue;
     const arr = availByTitle.get(a.title_id) || [];
     arr.push(a);
     availByTitle.set(a.title_id, arr);
   }
+
 
   const aliasGroup = getAliasGroupMembers(rawQuery);
   const requireAvailable = opts.requireAvailable !== false;

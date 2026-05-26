@@ -268,14 +268,27 @@ export const CatalogRefreshPanel = () => {
             <input type="number" min={1} max={5} className="bg-background border border-border rounded px-2 py-1" value={dPages} onChange={(e) => setDPages(Math.max(1, Math.min(5, Number(e.target.value) || 1)))} />
           </label>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <label className="flex items-center gap-2 text-xs">
             <input type="checkbox" checked={dDryRun} onChange={(e) => setDDryRun(e.target.checked)} />
             Dry-run (no writes)
           </label>
+          <label className={`flex items-center gap-2 text-xs ${dDryRun ? "opacity-50" : ""}`}>
+            <input
+              type="checkbox"
+              checked={dProcessAfter}
+              disabled={dDryRun}
+              onChange={(e) => setDProcessAfter(e.target.checked)}
+            />
+            Apply sonrası dirty sync çalıştır
+          </label>
           <Button size="sm" variant={dDryRun ? "secondary" : "default"} onClick={runDiscovery} disabled={discovering} className="gap-1">
             {discovering ? <Loader2 className="w-3 h-3 animate-spin" /> : <Compass className="w-3 h-3" />}
             {dDryRun ? "Run dry-run" : "Apply discovery"}
+          </Button>
+          <Button size="sm" variant="outline" onClick={runSmoke} disabled={smokeRunning} className="gap-1">
+            {smokeRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
+            Golden smoke
           </Button>
         </div>
 
@@ -284,12 +297,26 @@ export const CatalogRefreshPanel = () => {
             <div className="font-mono text-muted-foreground">
               scanned={lastDiscovery.counters.scanned} verified={lastDiscovery.counters.verified}
               {!lastDiscovery.dry_run && (
-                <> · inserted={lastDiscovery.counters.inserted_titles} updated={lastDiscovery.counters.updated_titles} avail={lastDiscovery.counters.availability_rows} dirty={lastDiscovery.counters.dirty_enqueued} aliases={lastDiscovery.counters.aliases_added}</>
+                <> · inserted={lastDiscovery.counters.inserted_titles} updated={lastDiscovery.counters.updated_titles} avail={lastDiscovery.counters.availability_rows} aliases={lastDiscovery.counters.aliases_added}</>
               )}
               {" · "}skip(noPoster)={lastDiscovery.counters.skipped_no_poster} skip(unverified)={lastDiscovery.counters.skipped_unverified}
               {!lastDiscovery.dry_run && <> skip(override)={lastDiscovery.counters.skipped_override_guard} skip(protected)={lastDiscovery.counters.skipped_protected_source}</>}
               {" · "}failed={lastDiscovery.counters.failed}
             </div>
+            {!lastDiscovery.dry_run && (
+              <div className="font-mono text-muted-foreground">
+                dirty: attempted={lastDiscovery.counters.dirty_enqueue_attempted ?? lastDiscovery.counters.dirty_enqueued}
+                {" · "}new={lastDiscovery.counters.dirty_enqueued_new ?? "-"}
+                {" · "}merged={lastDiscovery.counters.dirty_enqueued_merged ?? "-"}
+                {lastDiscovery.counters.dirty_enqueue_failed ? <> · failed={lastDiscovery.counters.dirty_enqueue_failed}</> : null}
+              </div>
+            )}
+            {lastDiscovery.dirty_sync && (
+              <div className={`font-mono ${lastDiscovery.dirty_sync.ok ? "text-emerald-500" : "text-destructive"}`}>
+                dirty_sync: ok={String(lastDiscovery.dirty_sync.ok)} processed={lastDiscovery.dirty_sync.processed ?? "-"} failed={lastDiscovery.dirty_sync.failed ?? "-"} cache_cleared={lastDiscovery.dirty_sync.cache_cleared ?? "-"}
+                {lastDiscovery.dirty_sync.error ? <> · {String(lastDiscovery.dirty_sync.error).slice(0, 120)}</> : null}
+              </div>
+            )}
             {lastDiscovery.dry_run && Array.isArray(lastDiscovery.candidates_sample) && lastDiscovery.candidates_sample.length > 0 && (
               <details className="text-xs">
                 <summary className="cursor-pointer text-muted-foreground">Candidates ({lastDiscovery.candidates_sample.length})</summary>
@@ -302,6 +329,22 @@ export const CatalogRefreshPanel = () => {
                 </ul>
               </details>
             )}
+          </div>
+        )}
+
+        {smoke?.results && (
+          <div className="text-xs space-y-1">
+            <h4 className="text-[11px] uppercase text-muted-foreground">Golden smoke</h4>
+            <div className="space-y-0.5 max-h-40 overflow-y-auto">
+              {smoke.results.map((r: any, i: number) => (
+                <div key={i} className="flex items-center justify-between gap-2 border-b border-border/40 py-0.5">
+                  <span className="font-mono text-muted-foreground truncate">{r.q}</span>
+                  <span className={r.error ? "text-destructive" : (r.total > 0 ? "text-emerald-500" : "text-amber-500")}>
+                    {r.error ? r.error.slice(0, 60) : `n=${r.total} · ${(r.top?.[0]?.title ?? "—")}`}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 

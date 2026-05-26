@@ -352,10 +352,12 @@ export async function searchTitlesInDb(
 
   const availByTitle = new Map<string, any[]>();
   for (const a of availRows || []) {
+    if (!isEligibleAvail(a as any)) continue;
     const arr = availByTitle.get(a.title_id) || [];
     arr.push(a);
     availByTitle.set(a.title_id, arr);
   }
+
 
   const aliasGroup = getAliasGroupMembers(rawQuery);
   const requireAvailable = opts.requireAvailable !== false;

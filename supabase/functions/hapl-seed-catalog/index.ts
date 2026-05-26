@@ -1277,11 +1277,36 @@ serve(async (req: Request) => {
       }).eq("id", runId);
     }
 
+    // Optional: trigger dirty consumer (Meili sync + cache invalidation) in a
+    // small batch right after apply. Failures here do NOT flip the discovery
+    // job result — they're reported in a separate field.
+    let dirtySync: any = null;
+    if (!dryRun && body.process_dirty_after === true) {
+      const batch = Math.max(1, Math.min(200, Number(body.process_dirty_limit) || 50));
+      try {
+        const syncRes = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/hapl-sync-search-index`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+            "x-hapl-sync-token": Deno.env.get("HAPL_SYNC_TOKEN") || "",
+          },
+          body: JSON.stringify({ action: "sync_dirty_titles", limit: batch }),
+        });
+        const text = await syncRes.text();
+        try { dirtySync = JSON.parse(text); } catch { dirtySync = { ok: false, error: text.slice(0, 300) }; }
+        dirtySync = { ok: syncRes.ok && dirtySync?.ok !== false, http_status: syncRes.status, ...dirtySync };
+      } catch (e: any) {
+        dirtySync = { ok: false, error: e?.message || "dirty sync invoke failed" };
+      }
+    }
+
     return new Response(JSON.stringify({
       ok, dry_run: dryRun, run_id: runId, started_at: runStart, finished_at: finishedAt,
       provider_slug: providerSlug, tmdb_provider_id: target.tmdb_id,
       media_type: mediaType, sort_by: sortBy, page_limit: pageLimit,
       counters, candidates_sample: dryRun ? candidates : undefined,
+      dirty_sync: dirtySync,
       error: chunkErr || lastError || null,
     }, null, 2), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }

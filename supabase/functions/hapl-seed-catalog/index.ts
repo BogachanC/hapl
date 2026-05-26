@@ -1000,27 +1000,37 @@ serve(async (req: Request) => {
     }).select("id").maybeSingle();
     const runId = runIns.data?.id as string | undefined;
 
-    // Inline dirty enqueue (mirrors hapl-refresh helper).
-    const enqueueDirty = async (titleId: string, reason: string, meta: Record<string, unknown>) => {
+    // Inline dirty enqueue (mirrors hapl-refresh helper). Returns the outcome
+    // so we can split attempted vs newly-created vs merged-into-existing rows.
+    const enqueueDirty = async (titleId: string, reason: string, meta: Record<string, unknown>): Promise<"new" | "merged" | "error"> => {
       const ins = await sb.from("catalog_dirty_titles").insert({ title_id: titleId, reason, metadata: meta });
-      if (!ins.error) return;
-      if ((ins.error as any)?.code !== "23505") return;
+      if (!ins.error) return "new";
+      if ((ins.error as any)?.code !== "23505") return "error";
       const { data: open } = await sb.from("catalog_dirty_titles")
         .select("id, reason, metadata").eq("title_id", titleId)
         .is("processed_at", null).limit(1).maybeSingle();
-      if (!open) return;
+      if (!open) return "error";
       const reasons = new Set<string>(Array.isArray((open.metadata as any)?.reasons) ? (open.metadata as any).reasons : [open.reason]);
       reasons.add(reason);
       await sb.from("catalog_dirty_titles").update({
         reason, metadata: { ...(open.metadata || {}), ...meta, reasons: [...reasons] },
         enqueued_at: new Date().toISOString(),
       }).eq("id", open.id);
+      return "merged";
     };
 
     const counters = {
       scanned: 0, verified: 0, inserted_titles: 0, updated_titles: 0,
       metadata_updated: 0,
-      availability_rows: 0, aliases_added: 0, dirty_enqueued: 0,
+      availability_rows: 0, aliases_added: 0,
+      // `dirty_enqueued` kept for back-compat = attempted (= number of enqueue
+      // calls). The accurate split below distinguishes new rows vs merges into
+      // an existing open dirty row (partial-unique). Use the split for QA.
+      dirty_enqueued: 0,
+      dirty_enqueue_attempted: 0,
+      dirty_enqueued_new: 0,
+      dirty_enqueued_merged: 0,
+      dirty_enqueue_failed: 0,
       skipped_no_poster: 0, skipped_unverified: 0,
       skipped_override_guard: 0, skipped_protected_source: 0,
       failed: 0,

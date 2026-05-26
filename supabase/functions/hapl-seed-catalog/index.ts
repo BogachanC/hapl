@@ -1019,6 +1019,7 @@ serve(async (req: Request) => {
 
     const counters = {
       scanned: 0, verified: 0, inserted_titles: 0, updated_titles: 0,
+      metadata_updated: 0,
       availability_rows: 0, aliases_added: 0, dirty_enqueued: 0,
       skipped_no_poster: 0, skipped_unverified: 0,
       skipped_override_guard: 0, skipped_protected_source: 0,

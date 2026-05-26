@@ -1000,27 +1000,37 @@ serve(async (req: Request) => {
     }).select("id").maybeSingle();
     const runId = runIns.data?.id as string | undefined;
 
-    // Inline dirty enqueue (mirrors hapl-refresh helper).
-    const enqueueDirty = async (titleId: string, reason: string, meta: Record<string, unknown>) => {
+    // Inline dirty enqueue (mirrors hapl-refresh helper). Returns the outcome
+    // so we can split attempted vs newly-created vs merged-into-existing rows.
+    const enqueueDirty = async (titleId: string, reason: string, meta: Record<string, unknown>): Promise<"new" | "merged" | "error"> => {
       const ins = await sb.from("catalog_dirty_titles").insert({ title_id: titleId, reason, metadata: meta });
-      if (!ins.error) return;
-      if ((ins.error as any)?.code !== "23505") return;
+      if (!ins.error) return "new";
+      if ((ins.error as any)?.code !== "23505") return "error";
       const { data: open } = await sb.from("catalog_dirty_titles")
         .select("id, reason, metadata").eq("title_id", titleId)
         .is("processed_at", null).limit(1).maybeSingle();
-      if (!open) return;
+      if (!open) return "error";
       const reasons = new Set<string>(Array.isArray((open.metadata as any)?.reasons) ? (open.metadata as any).reasons : [open.reason]);
       reasons.add(reason);
       await sb.from("catalog_dirty_titles").update({
         reason, metadata: { ...(open.metadata || {}), ...meta, reasons: [...reasons] },
         enqueued_at: new Date().toISOString(),
       }).eq("id", open.id);
+      return "merged";
     };
 
     const counters = {
       scanned: 0, verified: 0, inserted_titles: 0, updated_titles: 0,
       metadata_updated: 0,
-      availability_rows: 0, aliases_added: 0, dirty_enqueued: 0,
+      availability_rows: 0, aliases_added: 0,
+      // `dirty_enqueued` kept for back-compat = attempted (= number of enqueue
+      // calls). The accurate split below distinguishes new rows vs merges into
+      // an existing open dirty row (partial-unique). Use the split for QA.
+      dirty_enqueued: 0,
+      dirty_enqueue_attempted: 0,
+      dirty_enqueued_new: 0,
+      dirty_enqueued_merged: 0,
+      dirty_enqueue_failed: 0,
       skipped_no_poster: 0, skipped_unverified: 0,
       skipped_override_guard: 0, skipped_protected_source: 0,
       failed: 0,
@@ -1226,13 +1236,17 @@ serve(async (req: Request) => {
               ? "title_upserted"
               : (itemAvailWritten > 0 ? "availability_changed" : "metadata_changed");
             try {
-              await enqueueDirty(titleId, reason, {
+              counters.dirty_enqueue_attempted++;
+              const outcome = await enqueueDirty(titleId, reason, {
                 source: "provider_discovery_delta", provider_slug: providerSlug, media_type: mediaType,
                 avail_written: itemAvailWritten, aliases_added: itemAliasesAdded,
                 metadata_changed: metadataChanged,
               });
-              counters.dirty_enqueued++;
-            } catch (_) { /* swallow */ }
+              counters.dirty_enqueued++; // back-compat = attempted
+              if (outcome === "new") counters.dirty_enqueued_new++;
+              else if (outcome === "merged") counters.dirty_enqueued_merged++;
+              else counters.dirty_enqueue_failed++;
+            } catch (_) { counters.dirty_enqueue_failed++; }
           }
 
 
@@ -1263,11 +1277,36 @@ serve(async (req: Request) => {
       }).eq("id", runId);
     }
 
+    // Optional: trigger dirty consumer (Meili sync + cache invalidation) in a
+    // small batch right after apply. Failures here do NOT flip the discovery
+    // job result — they're reported in a separate field.
+    let dirtySync: any = null;
+    if (!dryRun && body.process_dirty_after === true) {
+      const batch = Math.max(1, Math.min(200, Number(body.process_dirty_limit) || 50));
+      try {
+        const syncRes = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/hapl-sync-search-index`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+            "x-hapl-sync-token": Deno.env.get("HAPL_SYNC_TOKEN") || "",
+          },
+          body: JSON.stringify({ action: "sync_dirty_titles", limit: batch }),
+        });
+        const text = await syncRes.text();
+        try { dirtySync = JSON.parse(text); } catch { dirtySync = { ok: false, error: text.slice(0, 300) }; }
+        dirtySync = { ok: syncRes.ok && dirtySync?.ok !== false, http_status: syncRes.status, ...dirtySync };
+      } catch (e: any) {
+        dirtySync = { ok: false, error: e?.message || "dirty sync invoke failed" };
+      }
+    }
+
     return new Response(JSON.stringify({
       ok, dry_run: dryRun, run_id: runId, started_at: runStart, finished_at: finishedAt,
       provider_slug: providerSlug, tmdb_provider_id: target.tmdb_id,
       media_type: mediaType, sort_by: sortBy, page_limit: pageLimit,
       counters, candidates_sample: dryRun ? candidates : undefined,
+      dirty_sync: dirtySync,
       error: chunkErr || lastError || null,
     }, null, 2), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }

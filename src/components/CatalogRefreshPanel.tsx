@@ -46,7 +46,10 @@ export const CatalogRefreshPanel = () => {
   const [dSort, setDSort] = useState("popularity.desc");
   const [dPages, setDPages] = useState(1);
   const [dDryRun, setDDryRun] = useState(true);
+  const [dProcessAfter, setDProcessAfter] = useState(false);
   const [lastDiscovery, setLastDiscovery] = useState<any>(null);
+  const [smokeRunning, setSmokeRunning] = useState(false);
+  const [smoke, setSmoke] = useState<any>(null);
 
 
   const load = async () => {

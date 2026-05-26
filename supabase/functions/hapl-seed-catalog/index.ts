@@ -1236,13 +1236,17 @@ serve(async (req: Request) => {
               ? "title_upserted"
               : (itemAvailWritten > 0 ? "availability_changed" : "metadata_changed");
             try {
-              await enqueueDirty(titleId, reason, {
+              counters.dirty_enqueue_attempted++;
+              const outcome = await enqueueDirty(titleId, reason, {
                 source: "provider_discovery_delta", provider_slug: providerSlug, media_type: mediaType,
                 avail_written: itemAvailWritten, aliases_added: itemAliasesAdded,
                 metadata_changed: metadataChanged,
               });
-              counters.dirty_enqueued++;
-            } catch (_) { /* swallow */ }
+              counters.dirty_enqueued++; // back-compat = attempted
+              if (outcome === "new") counters.dirty_enqueued_new++;
+              else if (outcome === "merged") counters.dirty_enqueued_merged++;
+              else counters.dirty_enqueue_failed++;
+            } catch (_) { counters.dirty_enqueue_failed++; }
           }
 
 

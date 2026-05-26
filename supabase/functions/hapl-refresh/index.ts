@@ -401,6 +401,31 @@ serve(async (req) => {
   const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const sb = createClient(SUPABASE_URL, SERVICE_KEY);
 
+  // ── Concurrency guard ──────────────────────────────────────────────────
+  const owner = `run_${crypto.randomUUID()}`;
+  const acquired = await acquireLock(sb, owner);
+  if (!acquired) {
+    return new Response(JSON.stringify({
+      ok: true, skipped: true, reason: "another_run_in_progress",
+    }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+
+  // ── Run row ────────────────────────────────────────────────────────────
+  const runInsert = await sb.from("catalog_job_runs").insert({
+    job_name: "refresh_existing",
+    payload: { batch, lock_owner: owner },
+  }).select("id").maybeSingle();
+  const runId = runInsert.data?.id as string | undefined;
+
+  let processed = 0;
+  let failed = 0;
+  let totalFlipped = 0;
+  let totalAliases = 0;
+  let totalDirty = 0;
+  let totalOverrideSkips = 0;
+  let lastError: string | null = null;
+  let ok = true;
+
   try {
     // Stalest first: NULLs (never synced) come first
     const { data: titles, error } = await sb
@@ -410,51 +435,62 @@ serve(async (req) => {
       .limit(batch);
 
     if (error) throw error;
-    if (!titles || titles.length === 0) {
-      return new Response(JSON.stringify({ ok: true, processed: 0, message: "no titles" }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
 
-    const providers = await loadProviders(sb);
-
-    let processed = 0;
-    let failed = 0;
-    let totalFlipped = 0;
-    let totalAliases = 0;
-    let totalDirty = 0;
-    let totalOverrideSkips = 0;
-    const details: Array<{ id: string; title: string; providers: number; flipped: number; aliases: number; dirty: boolean; skipped_overrides: number }> = [];
-
-    for (const t of titles) {
-      try {
-        const r = await refreshOne(sb, t as any, providers);
-        if (r.ok) {
-          processed++;
-          totalFlipped += r.flipped;
-          totalAliases += r.aliases_added;
-          if (r.dirty) totalDirty++;
-          totalOverrideSkips += r.skipped_overrides;
-          details.push({
-            id: t.id, title: t.title, providers: r.provider_count,
-            flipped: r.flipped, aliases: r.aliases_added,
-            dirty: r.dirty, skipped_overrides: r.skipped_overrides,
-          });
-        } else {
+    if (titles && titles.length > 0) {
+      const providers = await loadProviders(sb);
+      // Cap consecutive TMDB failures: if upstream is down, bail without
+      // poisoning the rest of the catalog. We do not flip availability
+      // for titles we never managed to fetch.
+      let consecutiveFails = 0;
+      const CONSECUTIVE_FAIL_LIMIT = 5;
+      for (const t of titles) {
+        try {
+          const r = await refreshOne(sb, t as any, providers);
+          if (r.ok) {
+            processed++;
+            consecutiveFails = 0;
+            totalFlipped += r.flipped;
+            totalAliases += r.aliases_added;
+            if (r.dirty) totalDirty++;
+            totalOverrideSkips += r.skipped_overrides;
+          } else {
+            failed++;
+            consecutiveFails++;
+          }
+        } catch (e) {
+          console.error(`[hapl-refresh] title=${t.id} failed:`, (e as Error).message);
           failed++;
+          consecutiveFails++;
+          lastError = (e as Error).message;
         }
-      } catch (e) {
-        console.error(`[hapl-refresh] title=${t.id} failed:`, (e as Error).message);
-        failed++;
+        if (consecutiveFails >= CONSECUTIVE_FAIL_LIMIT) {
+          ok = false;
+          lastError = lastError || `aborted_after_${CONSECUTIVE_FAIL_LIMIT}_consecutive_failures`;
+          console.warn(`[hapl-refresh] aborting batch: ${lastError}`);
+          break;
+        }
       }
     }
 
     console.log(
-      `[hapl-refresh] processed=${processed} failed=${failed} flipped=${totalFlipped} aliases=${totalAliases} dirty=${totalDirty} override_skips=${totalOverrideSkips} batch=${batch}`,
+      `[hapl-refresh] processed=${processed} failed=${failed} flipped=${totalFlipped} aliases=${totalAliases} dirty=${totalDirty} override_skips=${totalOverrideSkips} batch=${batch} ok=${ok}`,
     );
 
+    if (runId) {
+      await sb.from("catalog_job_runs").update({
+        finished_at: new Date().toISOString(),
+        ok,
+        processed,
+        changed: totalFlipped + totalDirty,
+        dirty_enqueued: totalDirty,
+        override_skips: totalOverrideSkips,
+        failed,
+        last_error: lastError,
+      }).eq("id", runId);
+    }
+
     return new Response(JSON.stringify({
-      ok: true,
+      ok,
       batch,
       processed,
       failed,
@@ -462,15 +498,24 @@ serve(async (req) => {
       aliases_added: totalAliases,
       dirty_enqueued: totalDirty,
       override_skips: totalOverrideSkips,
-      details,
-    }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+      run_id: runId,
+    }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (err: any) {
     console.error("[hapl-refresh] error:", err);
+    if (runId) {
+      await sb.from("catalog_job_runs").update({
+        finished_at: new Date().toISOString(),
+        ok: false,
+        processed, failed, dirty_enqueued: totalDirty,
+        override_skips: totalOverrideSkips,
+        last_error: err.message,
+      }).eq("id", runId);
+    }
     return new Response(JSON.stringify({ error: err.message }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
+  } finally {
+    await releaseLock(sb, owner);
   }
 });

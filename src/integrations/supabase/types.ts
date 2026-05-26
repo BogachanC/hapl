@@ -22,6 +22,8 @@ export type Database = {
           last_error: string | null
           metadata: Json | null
           processed_at: string | null
+          processing_at: string | null
+          processing_owner: string | null
           reason: string
           source_job_id: string | null
           title_id: string
@@ -33,6 +35,8 @@ export type Database = {
           last_error?: string | null
           metadata?: Json | null
           processed_at?: string | null
+          processing_at?: string | null
+          processing_owner?: string | null
           reason: string
           source_job_id?: string | null
           title_id: string
@@ -44,6 +48,8 @@ export type Database = {
           last_error?: string | null
           metadata?: Json | null
           processed_at?: string | null
+          processing_at?: string | null
+          processing_owner?: string | null
           reason?: string
           source_job_id?: string | null
           title_id?: string
@@ -836,6 +842,16 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      claim_dirty_titles: {
+        Args: { p_limit: number; p_owner: string }
+        Returns: {
+          attempts: number
+          id: string
+          metadata: Json
+          reason: string
+          title_id: string
+        }[]
+      }
       get_hapl_sync_token: { Args: never; Returns: string }
       has_role: {
         Args: {

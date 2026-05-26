@@ -1196,6 +1196,7 @@ serve(async (req: Request) => {
               }
               return true;
             });
+            let itemAvailWritten = 0;
             if (writable.length > 0) {
               const { error: availErr } = await sb.from("content_availability")
                 .upsert(writable, { onConflict: "title_id,provider_id,region,availability_type" });
@@ -1203,27 +1204,38 @@ serve(async (req: Request) => {
                 counters.failed++; lastError = availErr.message;
               } else {
                 counters.availability_rows += writable.length;
+                itemAvailWritten = writable.length;
               }
             }
+            (item as any).__availWritten = itemAvailWritten;
           }
 
           // Alias hydration
+          let itemAliasesAdded = 0;
           try {
             if (await needsHydration(sb, detail.id, item.media_type)) {
               const added = await hydrateAliases(sb, detail.id, item.media_type, detail);
               counters.aliases_added += added;
+              itemAliasesAdded = added;
             }
           } catch (_) { /* swallow */ }
 
-          // Enqueue dirty when title is new or availability rows were touched
-          if (wasNew || counters.availability_rows > 0 || counters.aliases_added > 0) {
+          // Per-item dirty: new title, availability touched, aliases added, or metadata changed
+          const itemAvailWritten = (item as any).__availWritten || 0;
+          if (wasNew || itemAvailWritten > 0 || itemAliasesAdded > 0 || metadataChanged) {
+            const reason = wasNew
+              ? "title_upserted"
+              : (itemAvailWritten > 0 ? "availability_changed" : "metadata_changed");
             try {
-              await enqueueDirty(titleId, wasNew ? "title_upserted" : "availability_changed", {
+              await enqueueDirty(titleId, reason, {
                 source: "provider_discovery_delta", provider_slug: providerSlug, media_type: mediaType,
+                avail_written: itemAvailWritten, aliases_added: itemAliasesAdded,
+                metadata_changed: metadataChanged,
               });
               counters.dirty_enqueued++;
             } catch (_) { /* swallow */ }
           }
+
 
           await new Promise((r) => setTimeout(r, 60)); // be polite to TMDB
         }

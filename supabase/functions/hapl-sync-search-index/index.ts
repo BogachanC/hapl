@@ -163,21 +163,26 @@ async function collectBatch(
 
   const titleUuids: string[] = titleRows.map((t: any) => t.id);
 
-  // 2) Availability (TR, available) for these titles.
-  const { data: availRows } = await sb
-    .from("content_availability")
-    .select("title_id, provider_id, status, source, confidence")
-    .in("title_id", titleUuids)
-    .eq("region", "TR")
-    .eq("status", "available");
+  // 2) Availability (TR, ELIGIBLE) for these titles. Uses the shared
+  // eligibility filter so collectBatch agrees with sync_dirty_titles and the
+  // DB fallback path: rent-only / buy-only / low-confidence titles do not
+  // produce a Meili doc and therefore stay tombstoned (any pre-existing doc
+  // is updated by sync_dirty_titles / backfill, never resurrected here).
+  const availQuery = applyEligibilityFilter(
+    sb.from("content_availability")
+      .select("title_id, provider_id, status, source, confidence, availability_type"),
+  ).in("title_id", titleUuids);
+  const { data: availRows } = await availQuery;
 
-  // Drop titles without TR availability.
+  // Drop titles without eligible TR availability.
   const availByTitle = new Map<string, any[]>();
   for (const a of availRows || []) {
+    if (!isEligibleAvail(a as any)) continue; // belt + suspenders
     const arr = availByTitle.get(a.title_id) || [];
     arr.push(a);
     availByTitle.set(a.title_id, arr);
   }
+
 
   const providerIds = Array.from(
     new Set((availRows || []).map((a: any) => a.provider_id)),

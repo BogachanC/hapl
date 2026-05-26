@@ -58,6 +58,78 @@ export type Database = {
           },
         ]
       }
+      catalog_job_locks: {
+        Row: {
+          expires_at: string
+          heartbeat_at: string
+          lock_name: string
+          locked_at: string
+          metadata: Json
+          owner: string | null
+        }
+        Insert: {
+          expires_at: string
+          heartbeat_at?: string
+          lock_name: string
+          locked_at?: string
+          metadata?: Json
+          owner?: string | null
+        }
+        Update: {
+          expires_at?: string
+          heartbeat_at?: string
+          lock_name?: string
+          locked_at?: string
+          metadata?: Json
+          owner?: string | null
+        }
+        Relationships: []
+      }
+      catalog_job_runs: {
+        Row: {
+          changed: number
+          dirty_enqueued: number
+          failed: number
+          finished_at: string | null
+          id: string
+          job_name: string
+          last_error: string | null
+          ok: boolean | null
+          override_skips: number
+          payload: Json
+          processed: number
+          started_at: string
+        }
+        Insert: {
+          changed?: number
+          dirty_enqueued?: number
+          failed?: number
+          finished_at?: string | null
+          id?: string
+          job_name: string
+          last_error?: string | null
+          ok?: boolean | null
+          override_skips?: number
+          payload?: Json
+          processed?: number
+          started_at?: string
+        }
+        Update: {
+          changed?: number
+          dirty_enqueued?: number
+          failed?: number
+          finished_at?: string | null
+          id?: string
+          job_name?: string
+          last_error?: string | null
+          ok?: boolean | null
+          override_skips?: number
+          payload?: Json
+          processed?: number
+          started_at?: string
+        }
+        Relationships: []
+      }
       catalog_seed_jobs: {
         Row: {
           baseline: Json | null

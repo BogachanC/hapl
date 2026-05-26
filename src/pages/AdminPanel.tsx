@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { CatalogSeedPanel } from '@/components/CatalogSeedPanel';
 import { SearchIndexPanel } from '@/components/SearchIndexPanel';
+import { CatalogRefreshPanel } from '@/components/CatalogRefreshPanel';
 
 
 type TmdbResult = {
@@ -173,7 +174,10 @@ const AdminPanel = () => {
 
         <CatalogSeedPanel />
 
+        <CatalogRefreshPanel />
+
         <SearchIndexPanel />
+
 
         {/* Content Type Toggle */}
         <div className="flex gap-2">

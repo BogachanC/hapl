@@ -115,21 +115,45 @@ export const CatalogRefreshPanel = () => {
           sort_by: dSort,
           page_limit: dPages,
           dry_run: dDryRun,
+          process_dirty_after: !dDryRun && dProcessAfter,
         },
       });
       if (error) throw error;
       if (!data?.ok) throw new Error(data?.error || "discovery failed");
       setLastDiscovery(data);
       const c = data.counters || {};
+      const ds = data.dirty_sync;
       toast.success(
-        `${dDryRun ? "Dry-run" : "Apply"} · scanned=${c.scanned} verified=${c.verified} ` +
-        (dDryRun ? "" : `inserted=${c.inserted_titles} updated=${c.updated_titles} dirty=${c.dirty_enqueued}`),
+        `${dDryRun ? "Dry-run" : "Apply"} · scanned=${c.scanned} verified=${c.verified}` +
+        (dDryRun ? "" : ` · ins=${c.inserted_titles} upd=${c.updated_titles} dirty(new/merge/att)=${c.dirty_enqueued_new}/${c.dirty_enqueued_merged}/${c.dirty_enqueue_attempted}`) +
+        (ds ? ` · sync(p=${ds.processed ?? "-"}, f=${ds.failed ?? "-"})` : ""),
       );
       await load();
     } catch (e: any) {
       toast.error("Discovery hatası: " + (e.message || "bilinmeyen"));
     } finally {
       setDiscovering(false);
+    }
+  };
+
+  const runSmoke = async () => {
+    setSmokeRunning(true);
+    setSmoke(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("hapl-sync-search-index", {
+        body: {
+          action: "golden_test",
+          queries: ["goodfellas", "friends", "white lotus", "ice age", "buz devri", "şrek", "fast and furious"],
+        },
+      });
+      if (error) throw error;
+      setSmoke(data);
+      const empty = (data?.results || []).filter((r: any) => !r.total || r.total === 0).length;
+      toast.success(`Smoke ok · ${data?.results?.length || 0} queries · empty=${empty}`);
+    } catch (e: any) {
+      toast.error("Smoke hatası: " + (e.message || "bilinmeyen"));
+    } finally {
+      setSmokeRunning(false);
     }
   };
 

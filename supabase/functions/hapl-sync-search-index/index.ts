@@ -720,7 +720,225 @@ serve(async (req) => {
       });
     }
 
+
+    // ── Faz 3: Meili dirty consumer ──────────────────────────────────────
+    // Claims a batch of pending catalog_dirty_titles rows, rebuilds Meili
+    // documents for them, upserts to Meili, and marks each row as processed
+    // (or increments attempts + records last_error on failure). Also clears
+    // the search_cache so refreshed availability isn't masked by stale rows.
+    if (action === "sync_dirty_titles" || action === "process_dirty") {
+      if (!isMeiliConfigured(cfg)) {
+        return json({ ok: false, error: "Meilisearch not configured" }, 400);
+      }
+      const limit = Math.max(1, Math.min(200, Number(body?.limit) || 50));
+      const owner = `edge:${crypto.randomUUID().slice(0, 8)}`;
+
+      // Atomically claim pending rows
+      const { data: claimed, error: claimErr } = await sb.rpc("claim_dirty_titles", {
+        p_limit: limit,
+        p_owner: owner,
+      });
+      if (claimErr) {
+        return json({ ok: false, error: `claim failed: ${claimErr.message}` }, 500);
+      }
+      const rows = (claimed || []) as Array<{ id: string; title_id: string; attempts: number }>;
+      if (rows.length === 0) {
+        return json({ ok: true, claimed: 0, processed: 0, failed: 0, message: "no pending dirty titles" });
+      }
+
+      const titleIds = rows.map((r) => r.title_id);
+
+      // Build docs only for these specific titles. We mirror collectBatch()
+      // but constrained to titleIds and without the poster_path filter so a
+      // title that lost its poster still gets re-upserted (Meili setting may
+      // include filters that drop it, but the upsert itself remains idempotent).
+      const buildDocsForTitles = async (ids: string[]): Promise<{ docsByTitle: Map<string, MeiliDoc> }> => {
+        const out = new Map<string, MeiliDoc>();
+        if (ids.length === 0) return { docsByTitle: out };
+
+        const { data: titles, error: titleErr } = await sb
+          .from("content_titles")
+          .select(
+            "id, tmdb_id, tmdb_type, title, original_title, normalized_title, release_year, poster_path, backdrop_path, genres, content_kind, metadata, updated_at",
+          )
+          .in("id", ids);
+        if (titleErr) throw new Error(`titles fetch failed: ${titleErr.message}`);
+        const titleRows = titles || [];
+
+        const { data: availRows } = await sb
+          .from("content_availability")
+          .select("title_id, provider_id, status, source, confidence")
+          .in("title_id", ids)
+          .eq("region", "TR")
+          .eq("status", "available");
+        const availByTitle = new Map<string, any[]>();
+        for (const a of availRows || []) {
+          const arr = availByTitle.get(a.title_id) || [];
+          arr.push(a);
+          availByTitle.set(a.title_id, arr);
+        }
+        const providerIds = Array.from(new Set((availRows || []).map((a: any) => a.provider_id)));
+        const providerById = new Map<string, any>();
+        if (providerIds.length > 0) {
+          const { data: provs } = await sb
+            .from("streaming_providers")
+            .select("id, slug, display_name")
+            .in("id", providerIds);
+          for (const p of provs || []) providerById.set(p.id, p);
+        }
+
+        const movieIds = titleRows.filter((t: any) => t.tmdb_type === "movie").map((t: any) => t.tmdb_id);
+        const tvIds = titleRows.filter((t: any) => t.tmdb_type === "tv").map((t: any) => t.tmdb_id);
+        const aliasTasks: Promise<any>[] = [];
+        if (movieIds.length > 0) {
+          aliasTasks.push(
+            sb.from("content_title_aliases")
+              .select("tmdb_id, tmdb_type, alias, source, language, country")
+              .eq("tmdb_type", "movie").in("tmdb_id", movieIds),
+          );
+        }
+        if (tvIds.length > 0) {
+          aliasTasks.push(
+            sb.from("content_title_aliases")
+              .select("tmdb_id, tmdb_type, alias, source, language, country")
+              .eq("tmdb_type", "tv").in("tmdb_id", tvIds),
+          );
+        }
+        const aliasRes = await Promise.all(aliasTasks);
+        const aliasByKey = new Map<string, any[]>();
+        for (const r of aliasRes) {
+          for (const row of r.data || []) {
+            const key = `${row.tmdb_type}:${row.tmdb_id}`;
+            const arr = aliasByKey.get(key) || [];
+            arr.push({ alias: row.alias, source: row.source ?? null, language: row.language ?? null, country: row.country ?? null });
+            aliasByKey.set(key, arr);
+          }
+        }
+
+        for (const t of titleRows) {
+          const avails = availByTitle.get(t.id) || [];
+          if (avails.length === 0) continue; // no TR availability — skip upsert
+          const aliases = aliasByKey.get(`${t.tmdb_type}:${t.tmdb_id}`) || [];
+          out.set(t.id, mapContentTitleToMeiliDocument(t, aliases, avails, providerById));
+        }
+        return { docsByTitle: out };
+      };
+
+      let docsByTitle: Map<string, MeiliDoc>;
+      try {
+        const built = await buildDocsForTitles(titleIds);
+        docsByTitle = built.docsByTitle;
+      } catch (e: any) {
+        // Release the claim by clearing processing_at so they get retried; do
+        // NOT bump attempts (claim itself didn't fail per-title).
+        await sb.from("catalog_dirty_titles")
+          .update({ processing_at: null, processing_owner: null })
+          .in("id", rows.map((r) => r.id));
+        return json({ ok: false, error: `build failed: ${e?.message || String(e)}` }, 500);
+      }
+
+      // Upsert docs (single Meili task) and wait
+      let upsertErr: string | null = null;
+      const docs = Array.from(docsByTitle.values());
+      if (docs.length > 0) {
+        try {
+          const r = await upsertDocuments(docs, cfg);
+          const t = await waitForTask(r.taskUid, cfg, { timeoutMs: 20000 });
+          if (t.status !== "succeeded") {
+            upsertErr = `meili task ${t.status}: ${t.error?.code || ""} ${t.error?.message || ""}`.trim();
+          }
+        } catch (e: any) {
+          upsertErr = `meili upsert failed: ${e?.message || String(e)}`;
+        }
+      }
+
+      // Mark rows: success if its title was upserted OR had no docs (no TR
+      // availability) — the latter is a legitimate no-op. Failure if the
+      // Meili task failed overall.
+      const nowIso = new Date().toISOString();
+      let processed = 0;
+      let failed = 0;
+      if (upsertErr) {
+        const ids = rows.map((r) => r.id);
+        // bump attempts + record error, release processing lock
+        for (const r of rows) {
+          await sb.from("catalog_dirty_titles")
+            .update({
+              attempts: (r.attempts || 0) + 1,
+              last_error: upsertErr.slice(0, 500),
+              processing_at: null,
+              processing_owner: null,
+            })
+            .eq("id", r.id);
+          failed++;
+        }
+      } else {
+        for (const r of rows) {
+          await sb.from("catalog_dirty_titles")
+            .update({
+              processed_at: nowIso,
+              last_error: null,
+              processing_at: null,
+              processing_owner: null,
+            })
+            .eq("id", r.id);
+          processed++;
+        }
+      }
+
+      // Cache invalidation: dirty processing implies catalog changed, so
+      // blanket-clear search_cache. Response shape unaffected; cache rebuilds
+      // on next query.
+      let cacheCleared = 0;
+      if (!upsertErr && processed > 0) {
+        const { count, error: delErr } = await sb
+          .from("search_cache")
+          .delete({ count: "exact" })
+          .gt("created_at", "1970-01-01");
+        if (!delErr) cacheCleared = count || 0;
+      }
+
+      return json({
+        ok: !upsertErr,
+        action: "sync_dirty_titles",
+        claimed: rows.length,
+        docs_upserted: docs.length,
+        processed,
+        failed,
+        upsert_error: upsertErr,
+        cache_cleared: cacheCleared,
+      });
+    }
+
+    // ── Faz 3: dirty queue stats (admin panel) ──────────────────────────
+    if (action === "dirty_stats") {
+      const [openRes, failedRes, processedRes] = await Promise.all([
+        sb.from("catalog_dirty_titles").select("id", { count: "exact", head: true })
+          .is("processed_at", null).lt("attempts", 5),
+        sb.from("catalog_dirty_titles").select("id", { count: "exact", head: true })
+          .is("processed_at", null).gte("attempts", 5),
+        sb.from("catalog_dirty_titles").select("processed_at")
+          .not("processed_at", "is", null)
+          .order("processed_at", { ascending: false }).limit(1),
+      ]);
+      const lastErr = await sb.from("catalog_dirty_titles")
+        .select("last_error, attempts, title_id")
+        .not("last_error", "is", null)
+        .is("processed_at", null)
+        .order("attempts", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      return json({
+        ok: true,
+        open_count: openRes.count || 0,
+        failed_count: failedRes.count || 0,
+        last_processed_at: processedRes.data?.[0]?.processed_at || null,
+        last_error: lastErr.data || null,
+      });
+    }
+
     return json({ ok: false, error: `unknown action: ${action}` }, 400);
+
   } catch (e: any) {
     console.error("[hapl-sync-search-index] fatal:", e);
     return json({ ok: false, error: e?.message || String(e) }, 500);

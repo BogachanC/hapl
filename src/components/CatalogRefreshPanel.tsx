@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { Loader2, RefreshCw } from "lucide-react";
+import { Loader2, RefreshCw, Zap } from "lucide-react";
 import { toast } from "sonner";
 
 type RunRow = {
@@ -25,15 +25,23 @@ type LockRow = {
   owner: string | null;
 };
 
+type DirtyStats = {
+  open_count: number;
+  failed_count: number;
+  last_processed_at: string | null;
+  last_error: { last_error: string; attempts: number; title_id: string } | null;
+};
+
 export const CatalogRefreshPanel = () => {
   const [runs, setRuns] = useState<RunRow[]>([]);
   const [lock, setLock] = useState<LockRow | null>(null);
+  const [dirty, setDirty] = useState<DirtyStats | null>(null);
   const [loading, setLoading] = useState(false);
-  const [triggering, setTriggering] = useState(false);
+  const [processing, setProcessing] = useState(false);
 
   const load = async () => {
     setLoading(true);
-    const [{ data: r }, { data: l }] = await Promise.all([
+    const [{ data: r }, { data: l }, dirtyRes] = await Promise.all([
       supabase
         .from("catalog_job_runs")
         .select("*")
@@ -45,9 +53,11 @@ export const CatalogRefreshPanel = () => {
         .select("*")
         .eq("lock_name", "hapl_refresh")
         .maybeSingle(),
+      supabase.functions.invoke("hapl-sync-search-index", { body: { action: "dirty_stats" } }),
     ]);
     setRuns((r as RunRow[]) || []);
     setLock((l as LockRow | null) || null);
+    if (dirtyRes.data?.ok) setDirty(dirtyRes.data as DirtyStats);
     setLoading(false);
   };
 
@@ -55,15 +65,20 @@ export const CatalogRefreshPanel = () => {
     load();
   }, []);
 
-  const triggerRefresh = async () => {
-    setTriggering(true);
+  const processDirty = async () => {
+    setProcessing(true);
     try {
-      // Manual trigger goes through the same edge function; it requires the
-      // sync token, which we do NOT ship to the browser. So we call a
-      // dedicated admin RPC path instead — for now, instruct via toast.
-      toast.info("Cron her gün 03:15 ve 15:15 UTC'de çalışır. Manuel tetikleme için sync token gerekli.");
+      const { data, error } = await supabase.functions.invoke("hapl-sync-search-index", {
+        body: { action: "sync_dirty_titles", limit: 50 },
+      });
+      if (error) throw error;
+      if (!data?.ok) throw new Error(data?.upsert_error || data?.error || "failed");
+      toast.success(`Processed: ${data.processed}, failed: ${data.failed}, cache cleared: ${data.cache_cleared}`);
+      await load();
+    } catch (e: any) {
+      toast.error("Dirty process hatası: " + (e.message || "bilinmeyen"));
     } finally {
-      setTriggering(false);
+      setProcessing(false);
     }
   };
 
@@ -76,7 +91,7 @@ export const CatalogRefreshPanel = () => {
         <div>
           <h2 className="text-lg font-semibold">Catalog Refresh</h2>
           <p className="text-xs text-muted-foreground">
-            TMDB existing-catalog refresh scheduler (twice daily, batch=50)
+            TMDB refresh (twice daily, batch=50) + Meili dirty consumer
           </p>
         </div>
         <Button size="sm" variant="outline" onClick={load} disabled={loading}>
@@ -89,6 +104,29 @@ export const CatalogRefreshPanel = () => {
         <Stat label="Last status" value={last ? (last.ok ? "ok" : "failed") : "—"} tone={!last ? "muted" : last.ok ? "ok" : "err"} />
         <Stat label="Processed" value={last ? String(last.processed) : "—"} />
         <Stat label="Dirty enqueued" value={last ? String(last.dirty_enqueued) : "—"} />
+      </div>
+
+      <div className="rounded-md border border-border/60 p-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-medium">Dirty queue (Meili consumer)</h3>
+          <Button size="sm" variant="secondary" onClick={processDirty} disabled={processing} className="gap-1">
+            {processing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
+            Process dirty now
+          </Button>
+        </div>
+        <div className="grid grid-cols-3 gap-3 text-sm">
+          <Stat label="Open" value={dirty ? String(dirty.open_count) : "—"} tone={dirty && dirty.open_count > 0 ? "warn" : "ok"} />
+          <Stat label="Failed (>=5)" value={dirty ? String(dirty.failed_count) : "—"} tone={dirty && dirty.failed_count > 0 ? "err" : "ok"} />
+          <Stat
+            label="Last sync"
+            value={dirty?.last_processed_at ? new Date(dirty.last_processed_at).toLocaleString("tr-TR") : "—"}
+          />
+        </div>
+        {dirty?.last_error && (
+          <p className="text-xs text-destructive break-all">
+            attempts={dirty.last_error.attempts} · {dirty.last_error.last_error.slice(0, 160)}
+          </p>
+        )}
       </div>
 
       <div className="space-y-1">
@@ -108,10 +146,6 @@ export const CatalogRefreshPanel = () => {
           ))}
         </div>
       </div>
-
-      <Button size="sm" variant="secondary" onClick={triggerRefresh} disabled={triggering}>
-        Run small refresh now
-      </Button>
     </section>
   );
 };

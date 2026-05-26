@@ -34,6 +34,44 @@ const corsHeaders = {
 const DEFAULT_BATCH = 25;
 const MAX_BATCH = 100;
 const AVAILABILITY_FRESH_HOURS = 24 * 7; // mirror search-content semantics
+const LOCK_NAME = "hapl_refresh";
+const LOCK_TTL_MINUTES = 15;
+
+// Try to acquire a named lock. Returns true if acquired, false if another
+// active run holds it. Stale locks (expires_at <= now) are taken over.
+async function acquireLock(sb: any, owner: string): Promise<boolean> {
+  const now = new Date();
+  const expires = new Date(now.getTime() + LOCK_TTL_MINUTES * 60 * 1000);
+  // Try insert (first ever)
+  const ins = await sb.from("catalog_job_locks").insert({
+    lock_name: LOCK_NAME,
+    locked_at: now.toISOString(),
+    heartbeat_at: now.toISOString(),
+    expires_at: expires.toISOString(),
+    owner,
+  });
+  if (!ins.error) return true;
+  // On conflict: takeover only if existing lock is expired
+  const upd = await sb
+    .from("catalog_job_locks")
+    .update({
+      locked_at: now.toISOString(),
+      heartbeat_at: now.toISOString(),
+      expires_at: expires.toISOString(),
+      owner,
+    })
+    .eq("lock_name", LOCK_NAME)
+    .lte("expires_at", now.toISOString())
+    .select("lock_name");
+  if (upd.error) return false;
+  return Array.isArray(upd.data) && upd.data.length > 0;
+}
+
+async function releaseLock(sb: any, owner: string): Promise<void> {
+  await sb.from("catalog_job_locks").delete()
+    .eq("lock_name", LOCK_NAME)
+    .eq("owner", owner);
+}
 
 // Deterministic TMDB confidence mapping by availability_type.
 // Keep small + explicit; no schema change, no audit, no behavior change elsewhere.

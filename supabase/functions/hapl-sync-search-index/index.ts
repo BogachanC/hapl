@@ -42,12 +42,33 @@ const corsHeaders = {
 const DEFAULT_BATCH_SIZE = 100;
 const MAX_BATCH_SIZE = 200;
 
+// ─── Eligibility (single source of truth) ────────────────────────────────
+// A title is "eligible" to be visible in public search when it has at least
+// one TR availability row that is:
+//   • status = 'available'
+//   • availability_type ∈ ELIGIBLE_AVAILABILITY_TYPES
+//   • confidence >= ELIGIBLE_MIN_CONFIDENCE
+// Source (tmdb/manual/provider_rule/firecrawl) is NOT considered — any
+// available row from any source keeps the title eligible. This matches the
+// Faz 1 override guard: manual / provider_rule / firecrawl rows protect the
+// title even when TMDB refresh would otherwise mark it stale.
+const ELIGIBLE_AVAILABILITY_TYPES = ["stream", "free", "ads"] as const;
+const ELIGIBLE_MIN_CONFIDENCE = 0.5;
+
+function isEligibleAvail(a: { status: string; availability_type: string; confidence: number | null }): boolean {
+  if (a.status !== "available") return false;
+  if (!(ELIGIBLE_AVAILABILITY_TYPES as readonly string[]).includes(a.availability_type)) return false;
+  const c = typeof a.confidence === "number" ? a.confidence : 0;
+  return c >= ELIGIBLE_MIN_CONFIDENCE;
+}
+
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 }
+
 
 // ─── auth ────────────────────────────────────────────────────────────────
 async function authorize(req: Request, sb: any): Promise<{ ok: boolean; reason?: string }> {
@@ -767,12 +788,15 @@ serve(async (req) => {
 
         const { data: availRows } = await sb
           .from("content_availability")
-          .select("title_id, provider_id, status, source, confidence")
+          .select("title_id, provider_id, status, source, confidence, availability_type")
           .in("title_id", ids)
           .eq("region", "TR")
-          .eq("status", "available");
+          .eq("status", "available")
+          .in("availability_type", ELIGIBLE_AVAILABILITY_TYPES as unknown as string[])
+          .gte("confidence", ELIGIBLE_MIN_CONFIDENCE);
         const availByTitle = new Map<string, any[]>();
         for (const a of availRows || []) {
+          if (!isEligibleAvail(a)) continue; // belt + suspenders
           const arr = availByTitle.get(a.title_id) || [];
           arr.push(a);
           availByTitle.set(a.title_id, arr);
@@ -817,12 +841,16 @@ serve(async (req) => {
 
         for (const t of titleRows) {
           const avails = availByTitle.get(t.id) || [];
-          if (avails.length === 0) continue; // no TR availability — skip upsert
           const aliases = aliasByKey.get(`${t.tmdb_type}:${t.tmdb_id}`) || [];
+          // Faz 4: never skip — when avails is empty we still emit a tombstone
+          // doc. mapContentTitleToMeiliDocument with empty avails naturally
+          // produces providers=[], provider_names=[], available_in_tr=false,
+          // confidence=0 — which is exactly the tombstone shape.
           out.set(t.id, mapContentTitleToMeiliDocument(t, aliases, avails, providerById));
         }
         return { docsByTitle: out };
       };
+
 
       let docsByTitle: Map<string, MeiliDoc>;
       try {
@@ -910,8 +938,176 @@ serve(async (req) => {
       });
     }
 
+    // ── Faz 4: backfill ineligible tombstones (admin-only, manual) ──────
+    // Scans Meili for docs with available_in_tr=true whose DB rows no longer
+    // satisfy eligibility, and tombstones them (no delete). Batched + paged.
+    // dry_run=true reports counts + sample without writing.
+    if (action === "backfill_ineligible_tombstones") {
+      if (!isMeiliConfigured(cfg)) {
+        return json({ ok: false, error: "Meilisearch not configured" }, 400);
+      }
+      const dryRun = body?.dry_run !== false; // default to dry_run=true for safety
+      const pageLimit = Math.max(50, Math.min(1000, Number(body?.page_limit) || 500));
+      const maxPages = Math.max(1, Math.min(50, Number(body?.max_pages) || 10));
+
+      let scanned = 0;
+      let candidates = 0;
+      let tombstoned = 0;
+      let failed = 0;
+      const sample: Array<{ id: string; title: string; tmdb_id: number }> = [];
+      let lastError: string | null = null;
+
+      try {
+        for (let page = 0; page < maxPages; page++) {
+          // Page Meili docs filtered to available_in_tr=true
+          const fetched = await fetch(`${cfg.host}/indexes/${cfg.indexName}/documents/fetch`, {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${cfg.masterKey}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              filter: "available_in_tr = true",
+              limit: pageLimit,
+              offset: page * pageLimit,
+              fields: ["id", "tmdb_id", "type", "title"],
+            }),
+          });
+          if (!fetched.ok) {
+            lastError = `meili fetch page ${page} failed: ${fetched.status} ${await fetched.text()}`;
+            break;
+          }
+          const payload = await fetched.json();
+          const results: Array<{ id: string; tmdb_id: number; type: string; title: string }> = payload?.results || [];
+          if (results.length === 0) break;
+          scanned += results.length;
+
+          // Look up DB title rows by (tmdb_type, tmdb_id) to get internal ids
+          const movieTmdbIds = results.filter((r) => r.type === "movie").map((r) => r.tmdb_id);
+          const tvTmdbIds = results.filter((r) => r.type === "tv").map((r) => r.tmdb_id);
+          const titleLookup = new Map<string, { id: string; tmdb_id: number; tmdb_type: string }>();
+          for (const [type, ids] of [["movie", movieTmdbIds], ["tv", tvTmdbIds]] as const) {
+            if (ids.length === 0) continue;
+            // chunk to avoid URL length issues
+            const CHUNK = 200;
+            for (let i = 0; i < ids.length; i += CHUNK) {
+              const slice = ids.slice(i, i + CHUNK);
+              const { data: rows } = await sb
+                .from("content_titles")
+                .select("id, tmdb_id, tmdb_type")
+                .eq("tmdb_type", type)
+                .in("tmdb_id", slice);
+              for (const r of rows || []) titleLookup.set(`${r.tmdb_type}:${r.tmdb_id}`, r);
+            }
+          }
+
+          const dbIds = Array.from(titleLookup.values()).map((t) => t.id);
+          if (dbIds.length === 0) {
+            // All Meili docs in this page have no DB row at all → candidates
+            for (const r of results) {
+              candidates++;
+              if (sample.length < 25) sample.push({ id: r.id, title: r.title, tmdb_id: r.tmdb_id });
+            }
+            continue;
+          }
+
+          // Find which DB ids still have at least one eligible avail row
+          const eligibleSet = new Set<string>();
+          const CHUNK = 300;
+          for (let i = 0; i < dbIds.length; i += CHUNK) {
+            const slice = dbIds.slice(i, i + CHUNK);
+            const { data: rows } = await sb
+              .from("content_availability")
+              .select("title_id, status, availability_type, confidence")
+              .in("title_id", slice)
+              .eq("region", "TR")
+              .eq("status", "available")
+              .in("availability_type", ELIGIBLE_AVAILABILITY_TYPES as unknown as string[])
+              .gte("confidence", ELIGIBLE_MIN_CONFIDENCE);
+            for (const a of rows || []) {
+              if (isEligibleAvail(a as any)) eligibleSet.add((a as any).title_id);
+            }
+          }
+
+          // Build tombstone candidates: Meili doc says available_in_tr=true
+          // but DB has no eligible avail OR no matching content_titles row.
+          const tombstoneTitleIds: string[] = [];
+          for (const r of results) {
+            const dbRow = titleLookup.get(`${r.type}:${r.tmdb_id}`);
+            if (!dbRow) {
+              // No DB row → cannot rebuild. Tombstone via direct minimal doc.
+              candidates++;
+              if (sample.length < 25) sample.push({ id: r.id, title: r.title, tmdb_id: r.tmdb_id });
+              continue;
+            }
+            if (!eligibleSet.has(dbRow.id)) {
+              candidates++;
+              tombstoneTitleIds.push(dbRow.id);
+              if (sample.length < 25) sample.push({ id: r.id, title: r.title, tmdb_id: r.tmdb_id });
+            }
+          }
+
+          if (!dryRun && tombstoneTitleIds.length > 0) {
+            // Reuse buildDocsForTitles (avails empty → tombstone shape)
+            // Inline minimal version to avoid hoisting issues.
+            const { data: tRows } = await sb
+              .from("content_titles")
+              .select("id, tmdb_id, tmdb_type, title, original_title, normalized_title, release_year, poster_path, backdrop_path, genres, content_kind, metadata, updated_at")
+              .in("id", tombstoneTitleIds);
+            const tombDocs: MeiliDoc[] = [];
+            for (const t of tRows || []) {
+              tombDocs.push(mapContentTitleToMeiliDocument(t as any, [], [], new Map()));
+            }
+            if (tombDocs.length > 0) {
+              try {
+                const r = await upsertDocuments(tombDocs, cfg);
+                const task = await waitForTask(r.taskUid, cfg, { timeoutMs: 30000 });
+                if (task.status !== "succeeded") {
+                  failed += tombDocs.length;
+                  lastError = `meili task ${task.status}: ${task.error?.code || ""} ${task.error?.message || ""}`.trim();
+                } else {
+                  tombstoned += tombDocs.length;
+                }
+              } catch (e: any) {
+                failed += tombDocs.length;
+                lastError = `meili upsert failed: ${e?.message || String(e)}`;
+              }
+            }
+          }
+
+          if (results.length < pageLimit) break;
+        }
+      } catch (e: any) {
+        lastError = `backfill fatal: ${e?.message || String(e)}`;
+      }
+
+      // Cache invalidation if anything was tombstoned
+      let cacheCleared = 0;
+      if (!dryRun && tombstoned > 0) {
+        const { count } = await sb
+          .from("search_cache")
+          .delete({ count: "exact" })
+          .gt("created_at", "1970-01-01");
+        cacheCleared = count || 0;
+      }
+
+      return json({
+        ok: !lastError,
+        action: "backfill_ineligible_tombstones",
+        dry_run: dryRun,
+        scanned,
+        candidates,
+        tombstoned,
+        failed,
+        cache_cleared: cacheCleared,
+        sample_titles: sample,
+        last_error: lastError,
+      });
+    }
+
     // ── Faz 3: dirty queue stats (admin panel) ──────────────────────────
     if (action === "dirty_stats") {
+
       const [openRes, failedRes, processedRes] = await Promise.all([
         sb.from("catalog_dirty_titles").select("id", { count: "exact", head: true })
           .is("processed_at", null).lt("attempts", 5),

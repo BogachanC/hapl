@@ -174,7 +174,10 @@ const AdminPanel = () => {
 
         <CatalogSeedPanel />
 
+        <CatalogRefreshPanel />
+
         <SearchIndexPanel />
+
 
         {/* Content Type Toggle */}
         <div className="flex gap-2">

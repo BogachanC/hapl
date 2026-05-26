@@ -788,12 +788,15 @@ serve(async (req) => {
 
         const { data: availRows } = await sb
           .from("content_availability")
-          .select("title_id, provider_id, status, source, confidence")
+          .select("title_id, provider_id, status, source, confidence, availability_type")
           .in("title_id", ids)
           .eq("region", "TR")
-          .eq("status", "available");
+          .eq("status", "available")
+          .in("availability_type", ELIGIBLE_AVAILABILITY_TYPES as unknown as string[])
+          .gte("confidence", ELIGIBLE_MIN_CONFIDENCE);
         const availByTitle = new Map<string, any[]>();
         for (const a of availRows || []) {
+          if (!isEligibleAvail(a)) continue; // belt + suspenders
           const arr = availByTitle.get(a.title_id) || [];
           arr.push(a);
           availByTitle.set(a.title_id, arr);
@@ -838,12 +841,16 @@ serve(async (req) => {
 
         for (const t of titleRows) {
           const avails = availByTitle.get(t.id) || [];
-          if (avails.length === 0) continue; // no TR availability — skip upsert
           const aliases = aliasByKey.get(`${t.tmdb_type}:${t.tmdb_id}`) || [];
+          // Faz 4: never skip — when avails is empty we still emit a tombstone
+          // doc. mapContentTitleToMeiliDocument with empty avails naturally
+          // produces providers=[], provider_names=[], available_in_tr=false,
+          // confidence=0 — which is exactly the tombstone shape.
           out.set(t.id, mapContentTitleToMeiliDocument(t, aliases, avails, providerById));
         }
         return { docsByTitle: out };
       };
+
 
       let docsByTitle: Map<string, MeiliDoc>;
       try {

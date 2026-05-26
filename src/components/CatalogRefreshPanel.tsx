@@ -37,8 +37,17 @@ export const CatalogRefreshPanel = () => {
   const [runs, setRuns] = useState<RunRow[]>([]);
   const [lock, setLock] = useState<LockRow | null>(null);
   const [dirty, setDirty] = useState<DirtyStats | null>(null);
+  const [discoveryRuns, setDiscoveryRuns] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [processing, setProcessing] = useState(false);
+  const [discovering, setDiscovering] = useState(false);
+  const [dProvider, setDProvider] = useState("netflix");
+  const [dMedia, setDMedia] = useState<"movie" | "tv">("movie");
+  const [dSort, setDSort] = useState("popularity.desc");
+  const [dPages, setDPages] = useState(1);
+  const [dDryRun, setDDryRun] = useState(true);
+  const [lastDiscovery, setLastDiscovery] = useState<any>(null);
+
 
   const load = async () => {
     setLoading(true);

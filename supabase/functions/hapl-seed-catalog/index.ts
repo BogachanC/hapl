@@ -1019,6 +1019,7 @@ serve(async (req: Request) => {
 
     const counters = {
       scanned: 0, verified: 0, inserted_titles: 0, updated_titles: 0,
+      metadata_updated: 0,
       availability_rows: 0, aliases_added: 0, dirty_enqueued: 0,
       skipped_no_poster: 0, skipped_unverified: 0,
       skipped_override_guard: 0, skipped_protected_source: 0,
@@ -1086,26 +1087,49 @@ serve(async (req: Request) => {
           }
 
           const nowIso = new Date().toISOString();
-          const { data: existingTitle } = await sb.from("content_titles").select("id")
+          const { data: existingTitle } = await sb.from("content_titles")
+            .select("id, poster_path, backdrop_path, overview, release_year, content_kind, genres, metadata, title, original_title")
             .eq("tmdb_id", detail.id).eq("tmdb_type", item.media_type).maybeSingle();
           const wasNew = !existingTitle;
 
+          const newGenres = (detail.genres || []).map((g: any) => g.name);
+          const newKind = deriveContentKind(item.media_type, detail.genres || []);
+          const newYear = detail.release_date ? new Date(detail.release_date).getFullYear() : null;
           const titleRow = {
             tmdb_id: detail.id, tmdb_type: item.media_type,
             title: detail.title, original_title: detail.original_title || null,
             normalized_title: normalizeTitle(detail.title),
-            release_year: detail.release_date ? new Date(detail.release_date).getFullYear() : null,
+            release_year: newYear,
             first_release_date: detail.release_date || null,
             poster_path: detail.poster_path, backdrop_path: detail.backdrop_path,
             overview: detail.overview,
-            genres: (detail.genres || []).map((g: any) => g.name),
-            content_kind: deriveContentKind(item.media_type, detail.genres || []),
+            genres: newGenres,
+            content_kind: newKind,
             metadata: {
+              ...((existingTitle?.metadata as any) || {}),
               vote_average: detail.vote_average, vote_count: detail.vote_count,
               popularity: item.popularity, seeded_via: "provider_discovery_delta",
             },
             last_tmdb_sync_at: nowIso, last_full_sync_at: nowIso,
           };
+
+          // Detect meaningful metadata changes (ignore vote/popularity churn for dirty)
+          let metadataChanged = false;
+          if (!wasNew && existingTitle) {
+            const prevGenres = JSON.stringify(((existingTitle.genres as any[]) || []).slice().sort());
+            const nextGenres = JSON.stringify(newGenres.slice().sort());
+            metadataChanged = (
+              existingTitle.poster_path !== detail.poster_path ||
+              existingTitle.backdrop_path !== detail.backdrop_path ||
+              existingTitle.overview !== detail.overview ||
+              existingTitle.release_year !== newYear ||
+              existingTitle.content_kind !== newKind ||
+              existingTitle.title !== detail.title ||
+              (existingTitle.original_title || null) !== (detail.original_title || null) ||
+              prevGenres !== nextGenres
+            );
+          }
+
           const { data: titleData, error: titleErr } = await sb.from("content_titles")
             .upsert(titleRow, { onConflict: "tmdb_id,tmdb_type" }).select("id").maybeSingle();
           if (titleErr || !titleData?.id) {
@@ -1113,6 +1137,9 @@ serve(async (req: Request) => {
           }
           const titleId = titleData.id;
           if (wasNew) counters.inserted_titles++; else counters.updated_titles++;
+          if (metadataChanged) counters.metadata_updated++;
+
+
 
           // Manual override guard
           const { data: ov } = await sb.from("manual_availability_overrides")
@@ -1149,6 +1176,7 @@ serve(async (req: Request) => {
             }
           }
 
+          let itemAvailWritten = 0;
           if (bucketRows.length > 0) {
             // Protected-source guard: skip rows whose existing record is
             // manual/provider_rule/firecrawl (non-tmdb). Only upsert over
@@ -1176,27 +1204,37 @@ serve(async (req: Request) => {
                 counters.failed++; lastError = availErr.message;
               } else {
                 counters.availability_rows += writable.length;
+                itemAvailWritten = writable.length;
               }
             }
           }
 
           // Alias hydration
+          let itemAliasesAdded = 0;
           try {
             if (await needsHydration(sb, detail.id, item.media_type)) {
               const added = await hydrateAliases(sb, detail.id, item.media_type, detail);
               counters.aliases_added += added;
+              itemAliasesAdded = added;
             }
           } catch (_) { /* swallow */ }
 
-          // Enqueue dirty when title is new or availability rows were touched
-          if (wasNew || counters.availability_rows > 0 || counters.aliases_added > 0) {
+          // Per-item dirty: new title, availability touched, aliases added, or metadata changed
+
+          if (wasNew || itemAvailWritten > 0 || itemAliasesAdded > 0 || metadataChanged) {
+            const reason = wasNew
+              ? "title_upserted"
+              : (itemAvailWritten > 0 ? "availability_changed" : "metadata_changed");
             try {
-              await enqueueDirty(titleId, wasNew ? "title_upserted" : "availability_changed", {
+              await enqueueDirty(titleId, reason, {
                 source: "provider_discovery_delta", provider_slug: providerSlug, media_type: mediaType,
+                avail_written: itemAvailWritten, aliases_added: itemAliasesAdded,
+                metadata_changed: metadataChanged,
               });
               counters.dirty_enqueued++;
             } catch (_) { /* swallow */ }
           }
+
 
           await new Promise((r) => setTimeout(r, 60)); // be polite to TMDB
         }

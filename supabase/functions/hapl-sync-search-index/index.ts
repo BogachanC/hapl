@@ -778,14 +778,11 @@ serve(async (req) => {
         if (titleErr) throw new Error(`titles fetch failed: ${titleErr.message}`);
         const titleRows = titles || [];
 
-        const { data: availRows } = await sb
-          .from("content_availability")
-          .select("title_id, provider_id, status, source, confidence, availability_type")
-          .in("title_id", ids)
-          .eq("region", "TR")
-          .eq("status", "available")
-          .in("availability_type", ELIGIBLE_AVAILABILITY_TYPES as unknown as string[])
-          .gte("confidence", ELIGIBLE_MIN_CONFIDENCE);
+        const { data: availRows } = await applyEligibilityFilter(
+          sb.from("content_availability")
+            .select("title_id, provider_id, status, source, confidence, availability_type"),
+        ).in("title_id", ids);
+
         const availByTitle = new Map<string, any[]>();
         for (const a of availRows || []) {
           if (!isEligibleAvail(a)) continue; // belt + suspenders

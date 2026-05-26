@@ -1176,6 +1176,7 @@ serve(async (req: Request) => {
             }
           }
 
+          let itemAvailWritten = 0;
           if (bucketRows.length > 0) {
             // Protected-source guard: skip rows whose existing record is
             // manual/provider_rule/firecrawl (non-tmdb). Only upsert over
@@ -1196,7 +1197,6 @@ serve(async (req: Request) => {
               }
               return true;
             });
-            let itemAvailWritten = 0;
             if (writable.length > 0) {
               const { error: availErr } = await sb.from("content_availability")
                 .upsert(writable, { onConflict: "title_id,provider_id,region,availability_type" });
@@ -1207,7 +1207,6 @@ serve(async (req: Request) => {
                 itemAvailWritten = writable.length;
               }
             }
-            (item as any).__availWritten = itemAvailWritten;
           }
 
           // Alias hydration
@@ -1221,7 +1220,7 @@ serve(async (req: Request) => {
           } catch (_) { /* swallow */ }
 
           // Per-item dirty: new title, availability touched, aliases added, or metadata changed
-          const itemAvailWritten = (item as any).__availWritten || 0;
+
           if (wasNew || itemAvailWritten > 0 || itemAliasesAdded > 0 || metadataChanged) {
             const reason = wasNew
               ? "title_upserted"

@@ -51,7 +51,7 @@ export const CatalogRefreshPanel = () => {
 
   const load = async () => {
     setLoading(true);
-    const [{ data: r }, { data: l }, dirtyRes] = await Promise.all([
+    const [{ data: r }, { data: l }, dirtyRes, { data: dr }] = await Promise.all([
       supabase
         .from("catalog_job_runs")
         .select("*")
@@ -64,12 +64,20 @@ export const CatalogRefreshPanel = () => {
         .eq("lock_name", "hapl_refresh")
         .maybeSingle(),
       supabase.functions.invoke("hapl-sync-search-index", { body: { action: "dirty_stats" } }),
+      supabase
+        .from("catalog_job_runs")
+        .select("*")
+        .eq("job_name", "provider_discovery_delta")
+        .order("started_at", { ascending: false })
+        .limit(8),
     ]);
     setRuns((r as RunRow[]) || []);
     setLock((l as LockRow | null) || null);
     if (dirtyRes.data?.ok) setDirty(dirtyRes.data as DirtyStats);
+    setDiscoveryRuns((dr as any[]) || []);
     setLoading(false);
   };
+
 
   useEffect(() => {
     load();

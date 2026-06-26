@@ -493,7 +493,7 @@ export function mapContentTitleToMeiliDocument(
   if (isSpinOff || isSpecial) searchRank = 300;
 
   return {
-    id: sanitizeMeiliId(title.tmdb_type, title.tmdb_id),
+    id: sanitizeMeiliId(title.tmdb_type, title.tmdb_id ?? title.id),
     tmdb_id: Number(title.tmdb_id),
     type: title.tmdb_type,
     content_kind: title.content_kind,

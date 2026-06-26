@@ -198,8 +198,8 @@ async function collectBatch(
 
   // 3) Aliases.
   const tmdbKeys = titleRows.map((t: any) => ({ id: t.tmdb_id, type: t.tmdb_type }));
-  const movieIds = tmdbKeys.filter((k) => k.type === "movie").map((k) => k.id);
-  const tvIds = tmdbKeys.filter((k) => k.type === "tv").map((k) => k.id);
+  const movieIds = tmdbKeys.filter((k) => k.type === "movie" && k.id != null).map((k) => k.id);
+  const tvIds = tmdbKeys.filter((k) => k.type === "tv" && k.id != null).map((k) => k.id);
   const aliasTasks: Promise<any>[] = [];
   if (movieIds.length > 0) {
     aliasTasks.push(
@@ -800,8 +800,8 @@ serve(async (req) => {
           for (const p of provs || []) providerById.set(p.id, p);
         }
 
-        const movieIds = titleRows.filter((t: any) => t.tmdb_type === "movie").map((t: any) => t.tmdb_id);
-        const tvIds = titleRows.filter((t: any) => t.tmdb_type === "tv").map((t: any) => t.tmdb_id);
+        const movieIds = titleRows.filter((t: any) => t.tmdb_type === "movie" && t.tmdb_id != null).map((t: any) => t.tmdb_id);
+        const tvIds = titleRows.filter((t: any) => t.tmdb_type === "tv" && t.tmdb_id != null).map((t: any) => t.tmdb_id);
         const aliasTasks: Promise<any>[] = [];
         if (movieIds.length > 0) {
           aliasTasks.push(

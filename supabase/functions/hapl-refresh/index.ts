@@ -431,6 +431,7 @@ serve(async (req) => {
     const { data: titles, error } = await sb
       .from("content_titles")
       .select("id, tmdb_id, tmdb_type, title, last_tmdb_sync_at")
+      .not("tmdb_id", "is", null)
       .order("last_tmdb_sync_at", { ascending: true, nullsFirst: true })
       .limit(batch);
 

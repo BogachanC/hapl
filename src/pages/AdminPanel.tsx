@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import { usePlatforms } from '@/hooks/use-contents';
+import { useStreamingProviders } from '@/hooks/useStreamingProviders';
 import { Search, Plus, ArrowLeft, Loader2, Film, Tv, Check, LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -35,7 +35,7 @@ const AdminPanel = () => {
   const [status, setStatus] = useState<'yayinda' | 'yakinda' | 'bitti'>('yayinda');
   const [loadingDetail, setLoadingDetail] = useState(false);
 
-  const { data: platforms } = usePlatforms();
+  const { data: platforms } = useStreamingProviders();
   const { user, signOut } = useAuth();
 
 
@@ -89,37 +89,21 @@ const AdminPanel = () => {
 
     setSaving(true);
     try {
-      const primaryPlatformId = selectedPlatforms[0];
-
-      const { data: inserted, error: insertError } = await supabase
-        .from('contents')
-        .insert({
+      const { data, error } = await supabase.functions.invoke('hapl-manual-add', {
+        body: {
           title: selectedResult.title,
-          description: selectedResult.overview,
+          contentType,
+          overview: selectedResult.overview,
           poster_url: selectedResult.poster_url,
-          content_type: contentType,
-          status,
+          release_year: selectedResult.release_year,
+          genres: selectedResult.genres,
           origin,
-          genre: selectedResult.genres || [],
-          release_year: selectedResult.release_year ? parseInt(selectedResult.release_year) : null,
-          platform_id: primaryPlatformId,
-        })
-        .select('id')
-        .single();
-
-      if (insertError) throw insertError;
-
-      // Add additional platforms to junction table
-      if (selectedPlatforms.length > 1) {
-        const junctionRows = selectedPlatforms.slice(1).map((pid) => ({
-          content_id: inserted.id,
-          platform_id: pid,
-        }));
-        const { error: junctionError } = await supabase
-          .from('content_platforms')
-          .insert(junctionRows);
-        if (junctionError) throw junctionError;
-      }
+          status,
+          provider_ids: selectedPlatforms,
+        },
+      });
+      if (error) throw error;
+      if (!data?.ok) throw new Error(data?.error || 'Ekleme başarısız');
 
       toast.success(`"${selectedResult.title}" başarıyla eklendi!`);
       setSelectedResult(null);
@@ -279,7 +263,7 @@ const AdminPanel = () => {
                     className="gap-1"
                   >
                     {selectedPlatforms.includes(p.id) && <Check className="h-3 w-3" />}
-                    {p.name}
+                    {p.display_name}
                   </Button>
                 ))}
               </div>

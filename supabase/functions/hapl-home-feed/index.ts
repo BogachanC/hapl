@@ -65,7 +65,7 @@ interface FeedItem {
   imdb_rating: number | null;
   vote_count: number;
   genres: string[];
-  platforms: Array<{ id: string; slug: string; name: string; logo_url: string | null; color: string; availability_type: string; confidence: number }>;
+  platforms: Array<{ id: string; slug: string; name: string; availability_type: string; confidence: number }>;
   available_in_tr: boolean;
   confidence: number;
   origin?: "yerli" | "yabanci" | "bilinmiyor";
@@ -229,30 +229,6 @@ serve(async (req: Request) => {
       }
     }
 
-    // Also pull display platforms metadata (logo/color) from `platforms` if slug matches.
-    // The two tables (`streaming_providers` vs legacy `platforms`) drifted on a few
-    // slugs — bridge them so we don't silently drop titles whose only provider is
-    // amazon-prime-video / max / tod-tv.
-    const SLUG_ALIASES: Record<string, string[]> = {
-      "amazon-prime-video": ["prime-video", "amazon-prime-video"],
-      "max":                ["hbo-max", "max"],
-      "tod-tv":             ["tod", "tod-tv"],
-    };
-    const { data: dispRows } = await sb
-      .from("platforms")
-      .select("id, slug, name, logo_url, color");
-    const dispBySlug = new Map<string, { id: string; slug: string; name: string; logo_url: string | null; color: string }>();
-    for (const d of dispRows || []) dispBySlug.set(d.slug, d);
-    function resolveDisplay(providerSlug: string) {
-      const direct = dispBySlug.get(providerSlug);
-      if (direct) return direct;
-      for (const alt of SLUG_ALIASES[providerSlug] || []) {
-        const hit = dispBySlug.get(alt);
-        if (hit) return hit;
-      }
-      return undefined;
-    }
-
     // 6) Build feed items + score
     const items: FeedItem[] = [];
     for (const t of titleRows) {
@@ -274,17 +250,11 @@ serve(async (req: Request) => {
       }
       const platforms = Array.from(bestPerProvider.entries()).map(([pid, info]) => {
         const sp = provById.get(pid);
-        const disp = sp ? resolveDisplay(sp.slug) : undefined;
-        // Fallback: even when the legacy `platforms` row is missing, surface the
-        // streaming_providers entry so the title still renders. Color/logo will
-        // be best-effort defaults.
         const slug = sp?.slug || "";
         return {
           id: pid,
           slug,
-          name: disp?.name || sp?.display_name || slug,
-          logo_url: disp?.logo_url || null,
-          color: disp?.color || "#666666",
+          name: sp?.display_name || slug,
           availability_type: info.availability_type,
           confidence: info.confidence,
         };

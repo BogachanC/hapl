@@ -110,19 +110,3 @@ export function useContents(filters?: {
     },
   });
 }
-
-export function useContent(id: string) {
-  return useQuery({
-    queryKey: ['content', id],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('contents')
-        .select('*, platforms(*), content_platforms(platform_id, platforms(*))')
-        .eq('id', id)
-        .single();
-      if (error) throw error;
-      return data as Content;
-    },
-    enabled: !!id,
-  });
-}

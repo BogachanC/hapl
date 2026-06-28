@@ -422,8 +422,9 @@ export type Database = {
           poster_path: string | null
           release_year: number | null
           search_aliases: string[]
+          source: string
           title: string
-          tmdb_id: number
+          tmdb_id: number | null
           tmdb_type: string
           updated_at: string
         }
@@ -445,8 +446,9 @@ export type Database = {
           poster_path?: string | null
           release_year?: number | null
           search_aliases?: string[]
+          source?: string
           title: string
-          tmdb_id: number
+          tmdb_id?: number | null
           tmdb_type: string
           updated_at?: string
         }
@@ -468,8 +470,9 @@ export type Database = {
           poster_path?: string | null
           release_year?: number | null
           search_aliases?: string[]
+          source?: string
           title?: string
-          tmdb_id?: number
+          tmdb_id?: number | null
           tmdb_type?: string
           updated_at?: string
         }

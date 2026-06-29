@@ -89,54 +89,32 @@ serve(async (req: Request) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
 
-  const { data: titleData, error: titleErr } = await sb
-    .from("content_titles")
-    .insert({
-      tmdb_id: null,
-      tmdb_type: tmdbType,
-      title: title.trim(),
-      source: "manual",
-      overview: overview ?? null,
-      poster_path: poster_url ?? null,
-      release_year: Number.isFinite(parsedYear) ? parsedYear : null,
-      genres: Array.isArray(genres) ? genres : [],
-      metadata: { origin: origin ?? null, status: status ?? null, manual: true },
-    })
-    .select("id")
-    .single();
+  const { data: newTitleId, error: rpcError } = await sb.rpc(
+    "hapl_create_manual_title",
+    {
+      p_title: title.trim(),
+      p_tmdb_type: tmdbType,
+      p_provider_ids: provider_ids,
+      p_overview: overview ?? null,
+      p_poster_path: poster_url ?? null,
+      p_release_year: Number.isFinite(parsedYear) ? parsedYear : null,
+      p_genres: Array.isArray(genres) ? genres : [],
+      p_origin: origin ?? null,
+      p_status: status ?? null,
+    },
+  );
 
-  if (titleErr || !titleData?.id) {
-    console.error("[hapl-manual-add] content_titles insert failed:", titleErr?.message);
+  if (rpcError) {
+    console.error("[hapl-manual-add] rpc hapl_create_manual_title failed:", rpcError.message);
     return new Response(
-      JSON.stringify({ error: "content_titles insert failed", detail: titleErr?.message }),
+      JSON.stringify({ error: "insert failed", detail: rpcError.message }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }
 
-  const titleId = titleData.id;
-
-  const availRows = provider_ids.map((pid: string) => ({
-    title_id: titleId,
-    provider_id: pid,
-    status: "available",
-    source: "manual",
-  }));
-
-  const { error: availErr } = await sb
-    .from("content_availability")
-    .insert(availRows);
-
-  if (availErr) {
-    console.error("[hapl-manual-add] content_availability insert failed:", availErr.message);
-    return new Response(
-      JSON.stringify({ error: "content_availability insert failed", detail: availErr.message, title_id: titleId }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
-  }
-
-  console.log("[hapl-manual-add] created title", titleId, "with", provider_ids.length, "availability rows");
+  console.log("[hapl-manual-add] created title", newTitleId, "with", provider_ids.length, "availability rows");
   return new Response(
-    JSON.stringify({ ok: true, title_id: titleId }),
+    JSON.stringify({ ok: true, title_id: newTitleId }),
     { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
   );
 });

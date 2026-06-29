@@ -325,42 +325,6 @@ export type Database = {
         }
         Relationships: []
       }
-      content_platforms: {
-        Row: {
-          content_id: string
-          created_at: string
-          id: string
-          platform_id: string
-        }
-        Insert: {
-          content_id: string
-          created_at?: string
-          id?: string
-          platform_id: string
-        }
-        Update: {
-          content_id?: string
-          created_at?: string
-          id?: string
-          platform_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "content_platforms_content_id_fkey"
-            columns: ["content_id"]
-            isOneToOne: false
-            referencedRelation: "contents"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "content_platforms_platform_id_fkey"
-            columns: ["platform_id"]
-            isOneToOne: false
-            referencedRelation: "platforms"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       content_title_aliases: {
         Row: {
           alias: string
@@ -478,62 +442,6 @@ export type Database = {
         }
         Relationships: []
       }
-      contents: {
-        Row: {
-          content_type: Database["public"]["Enums"]["content_type"]
-          created_at: string
-          description: string | null
-          end_year: number | null
-          genre: string[] | null
-          id: string
-          origin: Database["public"]["Enums"]["content_origin"]
-          platform_id: string
-          poster_url: string | null
-          release_year: number | null
-          status: Database["public"]["Enums"]["content_status"]
-          title: string
-          updated_at: string
-        }
-        Insert: {
-          content_type?: Database["public"]["Enums"]["content_type"]
-          created_at?: string
-          description?: string | null
-          end_year?: number | null
-          genre?: string[] | null
-          id?: string
-          origin?: Database["public"]["Enums"]["content_origin"]
-          platform_id: string
-          poster_url?: string | null
-          release_year?: number | null
-          status?: Database["public"]["Enums"]["content_status"]
-          title: string
-          updated_at?: string
-        }
-        Update: {
-          content_type?: Database["public"]["Enums"]["content_type"]
-          created_at?: string
-          description?: string | null
-          end_year?: number | null
-          genre?: string[] | null
-          id?: string
-          origin?: Database["public"]["Enums"]["content_origin"]
-          platform_id?: string
-          poster_url?: string | null
-          release_year?: number | null
-          status?: Database["public"]["Enums"]["content_status"]
-          title?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "contents_platform_id_fkey"
-            columns: ["platform_id"]
-            isOneToOne: false
-            referencedRelation: "platforms"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       manual_availability_overrides: {
         Row: {
           action: string
@@ -587,33 +495,6 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
-      }
-      platforms: {
-        Row: {
-          color: string
-          created_at: string
-          id: string
-          logo_url: string | null
-          name: string
-          slug: string
-        }
-        Insert: {
-          color?: string
-          created_at?: string
-          id?: string
-          logo_url?: string | null
-          name: string
-          slug: string
-        }
-        Update: {
-          color?: string
-          created_at?: string
-          id?: string
-          logo_url?: string | null
-          name?: string
-          slug?: string
-        }
-        Relationships: []
       }
       provider_derivation_rules: {
         Row: {
@@ -856,6 +737,20 @@ export type Database = {
         }[]
       }
       get_hapl_sync_token: { Args: never; Returns: string }
+      hapl_create_manual_title: {
+        Args: {
+          p_genres?: string[]
+          p_origin?: string
+          p_overview?: string
+          p_poster_path?: string
+          p_provider_ids: string[]
+          p_release_year?: number
+          p_status?: string
+          p_title: string
+          p_tmdb_type: string
+        }
+        Returns: string
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]

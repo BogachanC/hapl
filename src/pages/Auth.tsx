@@ -19,7 +19,7 @@ const Auth = () => {
   // If already logged in, leave the auth page
   useEffect(() => {
     if (!authLoading && user) {
-      navigate("/admin", { replace: true });
+      navigate("/", { replace: true });
     }
   }, [user, authLoading, navigate]);
 
@@ -32,7 +32,7 @@ const Auth = () => {
         const { error } = await supabase.auth.signUp({
           email,
           password,
-          options: { emailRedirectTo: `${window.location.origin}/admin` },
+          options: { emailRedirectTo: `${window.location.origin}/` },
         });
         if (error) throw error;
         toast.success("Hesap oluşturuldu");
@@ -41,7 +41,7 @@ const Auth = () => {
         if (error) throw error;
         toast.success("Giriş yapıldı");
       }
-      navigate("/admin", { replace: true });
+      navigate("/", { replace: true });
     } catch (err: any) {
       toast.error(err.message || "Bir hata oluştu");
     } finally {

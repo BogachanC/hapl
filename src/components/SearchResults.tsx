@@ -7,6 +7,7 @@ import { getPlatformStyle } from '@/lib/platform-colors';
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { useAuth } from '@/hooks/useAuth';
 import { useWatchlist } from '@/hooks/useWatchlist';
+import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
 // Legacy fallback: search-content sometimes returns only `name` for older
@@ -203,6 +204,7 @@ function ContentDetailSheet({
   const navigate = useNavigate();
   const { user } = useAuth();
   const { isInWatchlist, addToWatchlist, removeFromWatchlist, adding, removing } = useWatchlist();
+  const [resolving, setResolving] = useState(false);
   const open = !!item;
   const typeLabel = item ? typeLabelFor(item) : '';
   const sources = item
@@ -305,37 +307,54 @@ function ContentDetailSheet({
               </div>
 
               {/* Watchlist toggle */}
-              {hasValidTitleId && (
-                <button
-                  type="button"
-                  disabled={adding || removing}
-                  onClick={() => {
-                    if (!user) {
-                      toast('Listeye eklemek için giriş yap');
-                      navigate('/auth');
-                      return;
-                    }
+              <button
+                type="button"
+                disabled={adding || removing || resolving}
+                onClick={async () => {
+                  if (!user) {
+                    toast('Listeye eklemek için giriş yap');
+                    navigate('/auth');
+                    return;
+                  }
+                  if (hasValidTitleId) {
                     if (inList) {
                       removeFromWatchlist(titleId);
                     } else {
                       addToWatchlist(titleId);
                     }
-                  }}
-                  className={cn(
-                    'flex items-center justify-center gap-2 w-full px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors',
-                    inList
-                      ? 'bg-primary/20 text-primary hover:bg-primary/30'
-                      : 'bg-secondary/80 hover:bg-secondary text-foreground',
-                  )}
-                >
-                  {adding || removing ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Bookmark className={cn('h-4 w-4', inList && 'fill-current')} />
-                  )}
-                  {inList ? 'Listemde' : 'Listeme Ekle'}
-                </button>
-              )}
+                  } else {
+                    setResolving(true);
+                    try {
+                      const { data, error } = await supabase.functions.invoke(
+                        'hapl-resolve-title',
+                        { body: { tmdb_id: item!.id, tmdb_type: item!.type } },
+                      );
+                      if (error || !data?.title_id) {
+                        toast.error('İçerik eklenirken bir hata oluştu');
+                        return;
+                      }
+                      addToWatchlist(data.title_id);
+                    } catch {
+                      toast.error('İçerik eklenirken bir hata oluştu');
+                    } finally {
+                      setResolving(false);
+                    }
+                  }
+                }}
+                className={cn(
+                  'flex items-center justify-center gap-2 w-full px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors',
+                  inList
+                    ? 'bg-primary/20 text-primary hover:bg-primary/30'
+                    : 'bg-secondary/80 hover:bg-secondary text-foreground',
+                )}
+              >
+                {adding || removing || resolving ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Bookmark className={cn('h-4 w-4', inList && 'fill-current')} />
+                )}
+                {inList ? 'Listemde' : 'Listeme Ekle'}
+              </button>
 
               {/* Sources */}
               {sources.length > 0 && (

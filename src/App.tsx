@@ -7,6 +7,7 @@ import Index from "./pages/Index.tsx";
 import AdminPanel from "./pages/AdminPanel.tsx";
 import Auth from "./pages/Auth.tsx";
 import About from "./pages/About.tsx";
+import Watchlist from "./pages/Watchlist.tsx";
 import NotFound from "./pages/NotFound.tsx";
 import ProtectedAdminRoute from "./components/ProtectedAdminRoute.tsx";
 
@@ -22,6 +23,7 @@ const App = () => (
           <Route path="/" element={<Index />} />
           <Route path="/auth" element={<Auth />} />
           <Route path="/about" element={<About />} />
+          <Route path="/watchlist" element={<Watchlist />} />
           <Route
             path="/admin"
             element={

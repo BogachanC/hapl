@@ -1,9 +1,13 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ContentResult } from '@/hooks/useContentSearch';
-import { Film, Tv, Calendar, Star, ExternalLink, X } from 'lucide-react';
+import { Film, Tv, Calendar, Star, ExternalLink, X, Bookmark, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getPlatformStyle } from '@/lib/platform-colors';
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
+import { useAuth } from '@/hooks/useAuth';
+import { useWatchlist } from '@/hooks/useWatchlist';
+import { toast } from 'sonner';
 
 // Legacy fallback: search-content sometimes returns only `name` for older
 // providers. Map well-known display names → slug so styling still works.
@@ -185,6 +189,10 @@ function SearchResultCard({
   );
 }
 
+function isContentTitlesUuid(id: number | string): boolean {
+  return typeof id === 'string' && /^[0-9a-f]{8}-/.test(id);
+}
+
 function ContentDetailSheet({
   item,
   onOpenChange,
@@ -192,11 +200,17 @@ function ContentDetailSheet({
   item: ContentResult | null;
   onOpenChange: (open: boolean) => void;
 }) {
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const { isInWatchlist, addToWatchlist, removeFromWatchlist, adding, removing } = useWatchlist();
   const open = !!item;
   const typeLabel = item ? typeLabelFor(item) : '';
   const sources = item
     ? Array.from(new Set(item.platforms.map((p: any) => p.source).filter(Boolean)))
     : [];
+  const titleId = item ? String(item.id) : '';
+  const hasValidTitleId = item ? isContentTitlesUuid(item.id) : false;
+  const inList = hasValidTitleId && isInWatchlist(titleId);
 
   const feedbackHref = item
     ? `mailto:hello@hapl.app?subject=${encodeURIComponent(`Hapl veri bildirimi: ${item.title}${item.year ? ` (${item.year})` : ''}`)}`
@@ -289,6 +303,39 @@ function ContentDetailSheet({
                   })}
                 </div>
               </div>
+
+              {/* Watchlist toggle */}
+              {hasValidTitleId && (
+                <button
+                  type="button"
+                  disabled={adding || removing}
+                  onClick={() => {
+                    if (!user) {
+                      toast('Listeye eklemek için giriş yap');
+                      navigate('/auth');
+                      return;
+                    }
+                    if (inList) {
+                      removeFromWatchlist(titleId);
+                    } else {
+                      addToWatchlist(titleId);
+                    }
+                  }}
+                  className={cn(
+                    'flex items-center justify-center gap-2 w-full px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors',
+                    inList
+                      ? 'bg-primary/20 text-primary hover:bg-primary/30'
+                      : 'bg-secondary/80 hover:bg-secondary text-foreground',
+                  )}
+                >
+                  {adding || removing ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Bookmark className={cn('h-4 w-4', inList && 'fill-current')} />
+                  )}
+                  {inList ? 'Listemde' : 'Listeme Ekle'}
+                </button>
+              )}
 
               {/* Sources */}
               {sources.length > 0 && (

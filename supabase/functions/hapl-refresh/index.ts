@@ -276,6 +276,7 @@ async function refreshOne(
   // explicitly-protected providers. For unprotected providers, the canonical
   // policy remains: TMDB is the source of truth.
   let addedOrFlippedAvailable = 0;
+  const addedProviderIds = new Set<string>();
   if (rows.length > 0) {
     await sb.from("content_availability").upsert(
       rows.map((r) => ({
@@ -295,7 +296,10 @@ async function refreshOne(
     );
     for (const r of rows) {
       const prev = existingMap.get(`${r.provider_id}:${r.availability_type}`);
-      if (!prev || prev.status !== "available") addedOrFlippedAvailable++;
+      if (!prev || prev.status !== "available") {
+        addedOrFlippedAvailable++;
+        addedProviderIds.add(r.provider_id);
+      }
     }
   }
 
@@ -312,6 +316,7 @@ async function refreshOne(
     return !r.checked_at || r.checked_at < staleCutoff;
   });
 
+  const removedProviderIds = new Set<string>();
   for (const r of toExpire) {
     await sb.from("content_availability").update({
       status: "unavailable",
@@ -319,6 +324,20 @@ async function refreshOne(
       expires_at: now,
       confidence: 0.3,
     }).eq("id", r.id);
+    removedProviderIds.add(r.provider_id);
+  }
+
+  // Write granular availability_changes for notification consumption.
+  const changeRows: Array<{ title_id: string; provider_id: string; action: string; detected_at: string }> = [];
+  for (const pid of addedProviderIds) {
+    changeRows.push({ title_id: row.id, provider_id: pid, action: "added", detected_at: now });
+  }
+  for (const pid of removedProviderIds) {
+    changeRows.push({ title_id: row.id, provider_id: pid, action: "removed", detected_at: now });
+  }
+  if (changeRows.length > 0) {
+    const { error: chgErr } = await sb.from("availability_changes").insert(changeRows);
+    if (chgErr) console.warn(`[hapl-refresh] availability_changes insert failed title=${row.id}:`, chgErr.message);
   }
 
   if (addedOrFlippedAvailable > 0 || toExpire.length > 0) {

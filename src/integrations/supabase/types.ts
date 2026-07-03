@@ -14,6 +14,48 @@ export type Database = {
   }
   public: {
     Tables: {
+      availability_changes: {
+        Row: {
+          action: string
+          detected_at: string
+          id: string
+          processed_at: string | null
+          provider_id: string
+          title_id: string
+        }
+        Insert: {
+          action: string
+          detected_at?: string
+          id?: string
+          processed_at?: string | null
+          provider_id: string
+          title_id: string
+        }
+        Update: {
+          action?: string
+          detected_at?: string
+          id?: string
+          processed_at?: string | null
+          provider_id?: string
+          title_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "availability_changes_provider_id_fkey"
+            columns: ["provider_id"]
+            isOneToOne: false
+            referencedRelation: "streaming_providers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "availability_changes_title_id_fkey"
+            columns: ["title_id"]
+            isOneToOne: false
+            referencedRelation: "content_titles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       catalog_dirty_titles: {
         Row: {
           attempts: number
@@ -496,6 +538,61 @@ export type Database = {
           },
         ]
       }
+      pending_notifications: {
+        Row: {
+          action: string
+          availability_change_id: string
+          created_at: string
+          id: string
+          provider_id: string
+          sent_at: string | null
+          title_id: string
+          user_id: string
+        }
+        Insert: {
+          action: string
+          availability_change_id: string
+          created_at?: string
+          id?: string
+          provider_id: string
+          sent_at?: string | null
+          title_id: string
+          user_id: string
+        }
+        Update: {
+          action?: string
+          availability_change_id?: string
+          created_at?: string
+          id?: string
+          provider_id?: string
+          sent_at?: string | null
+          title_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pending_notifications_availability_change_id_fkey"
+            columns: ["availability_change_id"]
+            isOneToOne: false
+            referencedRelation: "availability_changes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pending_notifications_provider_id_fkey"
+            columns: ["provider_id"]
+            isOneToOne: false
+            referencedRelation: "streaming_providers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pending_notifications_title_id_fkey"
+            columns: ["title_id"]
+            isOneToOne: false
+            referencedRelation: "content_titles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       provider_derivation_rules: {
         Row: {
           availability_type: string
@@ -720,6 +817,35 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      watchlist_items: {
+        Row: {
+          created_at: string
+          id: string
+          title_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          title_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          title_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "watchlist_items_title_id_fkey"
+            columns: ["title_id"]
+            isOneToOne: false
+            referencedRelation: "content_titles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {

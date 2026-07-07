@@ -23,6 +23,7 @@ import {
   matchTmdbProvider,
   type ProviderRow,
 } from "../_shared/providers.ts";
+import { deriveContentKind } from "../_shared/content-kind.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -87,21 +88,6 @@ function tmdbConfidenceFor(availType: string): number {
     case "buy":    return 0.86;
     default:       return 0.85;
   }
-}
-
-function deriveContentKind(
-  mediaType: "movie" | "tv",
-  genres: { id: number; name: string }[],
-): string {
-  const gnames = (genres || []).map((g) => (g.name || "").toLowerCase());
-  const isDoc = gnames.some((g) => g.includes("belgesel") || g.includes("documentary"));
-  const isReality =
-    gnames.some((g) => g.includes("reality") || g.includes("realite")) ||
-    gnames.some((g) => g.includes("yarışma") || g.includes("yarisma"));
-  if (isDoc) return "documentary";
-  if (mediaType === "tv" && isReality) return "reality";
-  if (mediaType === "movie") return "movie";
-  return "series";
 }
 
 // Returns the set of provider_ids that have an ACTIVE manual override for this title.

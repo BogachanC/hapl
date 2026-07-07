@@ -342,18 +342,23 @@ function ContentDetailSheet({
                   }
                 }}
                 className={cn(
-                  'flex items-center justify-center gap-2 w-full px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors',
+                  'group flex items-center justify-center gap-2 w-full px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors',
                   inList
-                    ? 'bg-primary/20 text-primary hover:bg-primary/30'
+                    ? 'bg-primary/20 text-primary hover:bg-destructive/15 hover:text-destructive'
                     : 'bg-secondary/80 hover:bg-secondary text-foreground',
                 )}
               >
                 {adding || removing || resolving ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
-                  <Bookmark className={cn('h-4 w-4', inList && 'fill-current')} />
+                  <Bookmark className={cn('h-4 w-4', inList && 'fill-primary group-hover:fill-destructive')} />
                 )}
-                {inList ? 'Listemde' : 'Listeme Ekle'}
+                {inList ? (
+                  <>
+                    <span className="group-hover:hidden">Listemde</span>
+                    <span className="hidden group-hover:inline">Listemden Çıkar</span>
+                  </>
+                ) : 'Listeme Ekle'}
               </button>
 
               {/* Sources */}

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ContentResult } from '@/hooks/useContentSearch';
 import { Film, Tv, Calendar, Star, ExternalLink, X, Bookmark, Loader2 } from 'lucide-react';
@@ -205,14 +205,16 @@ function ContentDetailSheet({
   const { user } = useAuth();
   const { isInWatchlist, addToWatchlist, removeFromWatchlist, adding, removing } = useWatchlist();
   const [resolving, setResolving] = useState(false);
+  const [resolvedId, setResolvedId] = useState<string | null>(null);
+  useEffect(() => { setResolvedId(null); }, [item?.id]);
   const open = !!item;
   const typeLabel = item ? typeLabelFor(item) : '';
   const sources = item
     ? Array.from(new Set(item.platforms.map((p: any) => p.source).filter(Boolean)))
     : [];
-  const titleId = item ? String(item.id) : '';
   const hasValidTitleId = item ? isContentTitlesUuid(item.id) : false;
-  const inList = hasValidTitleId && isInWatchlist(titleId);
+  const titleId = hasValidTitleId ? String(item!.id) : resolvedId ?? '';
+  const inList = !!titleId && isInWatchlist(titleId);
 
   const feedbackHref = item
     ? `mailto:hello@hapl.app?subject=${encodeURIComponent(`Hapl veri bildirimi: ${item.title}${item.year ? ` (${item.year})` : ''}`)}`
@@ -316,7 +318,7 @@ function ContentDetailSheet({
                     navigate('/auth');
                     return;
                   }
-                  if (hasValidTitleId) {
+                  if (hasValidTitleId || resolvedId) {
                     if (inList) {
                       removeFromWatchlist(titleId);
                     } else {
@@ -333,6 +335,7 @@ function ContentDetailSheet({
                         toast.error('İçerik eklenirken bir hata oluştu');
                         return;
                       }
+                      setResolvedId(data.title_id);
                       addToWatchlist(data.title_id);
                     } catch {
                       toast.error('İçerik eklenirken bir hata oluştu');

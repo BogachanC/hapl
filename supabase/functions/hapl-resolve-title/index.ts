@@ -7,27 +7,13 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
 import { normalizeTitle } from "../_shared/normalize.ts";
 import { tmdbDetail } from "../_shared/tmdb.ts";
+import { deriveContentKind } from "../_shared/content-kind.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type",
 };
-
-function deriveContentKind(
-  mediaType: "movie" | "tv",
-  genres: { id: number; name: string }[],
-): string {
-  const gnames = (genres || []).map((g) => (g.name || "").toLowerCase());
-  const isDoc = gnames.some((g) => g.includes("belgesel") || g.includes("documentary"));
-  const isReality =
-    gnames.some((g) => g.includes("reality") || g.includes("realite")) ||
-    gnames.some((g) => g.includes("yarışma") || g.includes("yarisma"));
-  if (isDoc) return "documentary";
-  if (mediaType === "tv" && isReality) return "reality";
-  if (mediaType === "movie") return "movie";
-  return "series";
-}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {

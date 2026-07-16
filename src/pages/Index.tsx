@@ -23,7 +23,10 @@ function typeToCategory(t: string | undefined): FeedCategory {
 
 const Index = () => {
   const { user } = useAuth();
-  const { providerIdSet } = useUserSubscriptions();
+  const { providerIdSet, slugSet } = useUserSubscriptions();
+  const ownership = user && (providerIdSet.size > 0 || slugSet.size > 0)
+    ? { providerIdSet, slugSet }
+    : undefined;
 
   const {
     results: searchResults,
@@ -171,7 +174,7 @@ const Index = () => {
                 <Loader2 className="h-6 w-6 animate-spin text-primary" />
               </div>
             ) : searchResults.length > 0 ? (
-              <SearchResults results={searchResults} />
+              <SearchResults results={searchResults} ownership={ownership} />
             ) : (
               <div className="text-center py-20 space-y-2">
                 <Tv className="h-10 w-10 text-muted-foreground/30 mx-auto" />
@@ -188,7 +191,7 @@ const Index = () => {
               onSelect={setSelectedProviderSlug}
             />
 
-            {user && providerIdSet.size === 0 && (
+            {user && !ownership && (
               <Link
                 to="/subscriptions"
                 className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-primary/10 border border-primary/20 text-xs text-primary hover:bg-primary/15 transition-colors"
@@ -207,7 +210,7 @@ const Index = () => {
               <>
                 <SearchResults
                   results={feedResults}
-                  subscribedProviderIds={user ? providerIdSet : undefined}
+                  ownership={ownership}
                 />
                 <div ref={sentinelRef} className="h-8" aria-hidden />
                 {loadingMore && (

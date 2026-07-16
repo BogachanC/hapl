@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ContentResult } from '@/hooks/useContentSearch';
+import { ContentResult, Platform } from '@/hooks/useContentSearch';
 import { Film, Tv, Calendar, Star, ExternalLink, X, Bookmark, Loader2, Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getPlatformStyle } from '@/lib/platform-colors';
@@ -45,16 +45,30 @@ function resolvePlatformSlug(p: { slug?: string; name: string }): string {
 }
 
 function typeLabelFor(item: ContentResult): string {
-  // content_kind isn't on ContentResult; fall back to tv/movie.
   return item.type === 'tv' ? 'Dizi' : 'Film';
+}
+
+export interface OwnershipContext {
+  providerIdSet: Set<string>;
+  slugSet: Set<string>;
+}
+
+function isPlatformOwned(p: Platform, ctx: OwnershipContext | undefined): boolean {
+  if (!ctx || (ctx.providerIdSet.size === 0 && ctx.slugSet.size === 0)) return false;
+  if (p.id != null && ctx.providerIdSet.has(String(p.id))) return true;
+  return ctx.slugSet.has(resolvePlatformSlug(p as any));
+}
+
+function hasAnyOwnership(ctx: OwnershipContext | undefined): boolean {
+  return !!ctx && (ctx.providerIdSet.size > 0 || ctx.slugSet.size > 0);
 }
 
 interface SearchResultsProps {
   results: ContentResult[];
-  subscribedProviderIds?: Set<string>;
+  ownership?: OwnershipContext;
 }
 
-export function SearchResults({ results, subscribedProviderIds }: SearchResultsProps) {
+export function SearchResults({ results, ownership }: SearchResultsProps) {
   const [selected, setSelected] = useState<ContentResult | null>(null);
 
   // Filter: only show content available in Turkey
@@ -81,7 +95,7 @@ export function SearchResults({ results, subscribedProviderIds }: SearchResultsP
             item={item}
             index={i}
             onSelect={() => setSelected(item)}
-            subscribedProviderIds={subscribedProviderIds}
+            ownership={ownership}
           />
         ))}
       </div>
@@ -89,6 +103,7 @@ export function SearchResults({ results, subscribedProviderIds }: SearchResultsP
       <ContentDetailSheet
         item={selected}
         onOpenChange={(open) => !open && setSelected(null)}
+        ownership={ownership}
       />
     </div>
   );
@@ -98,23 +113,26 @@ function SearchResultCard({
   item,
   index,
   onSelect,
-  subscribedProviderIds,
+  ownership,
 }: {
   item: ContentResult;
   index: number;
   onSelect: () => void;
-  subscribedProviderIds?: Set<string>;
+  ownership?: OwnershipContext;
 }) {
   const [imgError, setImgError] = useState(false);
   const typeLabel = typeLabelFor(item);
+  const active = hasAnyOwnership(ownership);
 
-  const platforms = subscribedProviderIds && subscribedProviderIds.size > 0
+  const platforms = active
     ? [...item.platforms].sort((a, b) => {
-        const aOwned = a.id != null && subscribedProviderIds.has(String(a.id)) ? 0 : 1;
-        const bOwned = b.id != null && subscribedProviderIds.has(String(b.id)) ? 0 : 1;
+        const aOwned = isPlatformOwned(a, ownership) ? 0 : 1;
+        const bOwned = isPlatformOwned(b, ownership) ? 0 : 1;
         return aOwned - bOwned;
       })
     : item.platforms;
+
+  const hasOwned = active && platforms.some((p) => isPlatformOwned(p, ownership));
 
   return (
     <button
@@ -157,7 +175,7 @@ function SearchResultCard({
           {platforms.map((p, i) => {
             const slug = resolvePlatformSlug(p as any);
             const style = getPlatformStyle(slug);
-            const owned = subscribedProviderIds && p.id != null && subscribedProviderIds.has(String(p.id));
+            const owned = isPlatformOwned(p, ownership);
             return (
               <div
                 key={i}
@@ -166,7 +184,7 @@ function SearchResultCard({
                   style.bg, style.text,
                   owned
                     ? 'px-1.5 py-1 ring-1 ring-green-400/60'
-                    : subscribedProviderIds && subscribedProviderIds.size > 0
+                    : active
                       ? 'px-2.5 py-1 opacity-50'
                       : 'px-2.5 py-1',
                 )}
@@ -181,6 +199,13 @@ function SearchResultCard({
             );
           })}
         </div>
+
+        {hasOwned && (
+          <div className="flex items-center gap-1 text-[9px] font-semibold text-green-400">
+            <Check className="h-2.5 w-2.5" />
+            İzleyebilirsin
+          </div>
+        )}
 
         <h3 className="font-heading font-bold text-xs text-foreground truncate leading-tight">{item.title}</h3>
 
@@ -220,9 +245,11 @@ function isContentTitlesUuid(id: number | string): boolean {
 function ContentDetailSheet({
   item,
   onOpenChange,
+  ownership,
 }: {
   item: ContentResult | null;
   onOpenChange: (open: boolean) => void;
+  ownership?: OwnershipContext;
 }) {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -238,6 +265,8 @@ function ContentDetailSheet({
   const hasValidTitleId = item ? isContentTitlesUuid(item.id) : false;
   const titleId = hasValidTitleId ? String(item!.id) : resolvedId ?? '';
   const inList = !!titleId && isInWatchlist(titleId);
+
+  const active = hasAnyOwnership(ownership);
 
   const feedbackHref = item
     ? `mailto:hello@hapl.app?subject=${encodeURIComponent(`Hapl veri bildirimi: ${item.title}${item.year ? ` (${item.year})` : ''}`)}`
@@ -316,19 +345,36 @@ function ContentDetailSheet({
                   {item.platforms.map((p, i) => {
                     const slug = resolvePlatformSlug(p as any);
                     const style = getPlatformStyle(slug);
+                    const owned = isPlatformOwned(p, ownership);
                     return (
                       <div
                         key={i}
                         className={cn(
                           'px-3.5 py-1.5 rounded-xl text-xs font-extrabold tracking-wide uppercase shadow-md',
-                          style.bg, style.text
+                          style.bg, style.text,
+                          owned
+                            ? 'ring-2 ring-green-400/70'
+                            : active
+                              ? 'opacity-50'
+                              : '',
                         )}
                       >
-                        {p.name}
+                        {owned ? (
+                          <span className="flex items-center gap-1">
+                            <Check className="h-3 w-3" />
+                            {p.name}
+                          </span>
+                        ) : p.name}
                       </div>
                     );
                   })}
                 </div>
+                {active && item.platforms.some((p) => isPlatformOwned(p, ownership)) && (
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-green-400">
+                    <Check className="h-3.5 w-3.5" />
+                    İzleyebilirsin — bu platform sende var
+                  </div>
+                )}
               </div>
 
               {/* Watchlist toggle */}

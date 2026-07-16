@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ContentResult } from '@/hooks/useContentSearch';
-import { Film, Tv, Calendar, Star, ExternalLink, X, Bookmark, Loader2 } from 'lucide-react';
+import { Film, Tv, Calendar, Star, ExternalLink, X, Bookmark, Loader2, Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getPlatformStyle } from '@/lib/platform-colors';
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
@@ -51,9 +51,10 @@ function typeLabelFor(item: ContentResult): string {
 
 interface SearchResultsProps {
   results: ContentResult[];
+  subscribedProviderIds?: Set<string>;
 }
 
-export function SearchResults({ results }: SearchResultsProps) {
+export function SearchResults({ results, subscribedProviderIds }: SearchResultsProps) {
   const [selected, setSelected] = useState<ContentResult | null>(null);
 
   // Filter: only show content available in Turkey
@@ -80,6 +81,7 @@ export function SearchResults({ results }: SearchResultsProps) {
             item={item}
             index={i}
             onSelect={() => setSelected(item)}
+            subscribedProviderIds={subscribedProviderIds}
           />
         ))}
       </div>
@@ -96,13 +98,23 @@ function SearchResultCard({
   item,
   index,
   onSelect,
+  subscribedProviderIds,
 }: {
   item: ContentResult;
   index: number;
   onSelect: () => void;
+  subscribedProviderIds?: Set<string>;
 }) {
   const [imgError, setImgError] = useState(false);
   const typeLabel = typeLabelFor(item);
+
+  const platforms = subscribedProviderIds && subscribedProviderIds.size > 0
+    ? [...item.platforms].sort((a, b) => {
+        const aOwned = a.id != null && subscribedProviderIds.has(String(a.id)) ? 0 : 1;
+        const bOwned = b.id != null && subscribedProviderIds.has(String(b.id)) ? 0 : 1;
+        return aOwned - bOwned;
+      })
+    : item.platforms;
 
   return (
     <button
@@ -142,18 +154,29 @@ function SearchResultCard({
       <div className="p-2 space-y-1.5">
         {/* Platforms */}
         <div className="flex flex-wrap gap-1">
-          {item.platforms.map((p, i) => {
+          {platforms.map((p, i) => {
             const slug = resolvePlatformSlug(p as any);
             const style = getPlatformStyle(slug);
+            const owned = subscribedProviderIds && p.id != null && subscribedProviderIds.has(String(p.id));
             return (
               <div
                 key={i}
                 className={cn(
-                  'shrink-0 px-2.5 py-1 rounded-md text-[10px] font-extrabold tracking-wide uppercase',
-                  style.bg, style.text
+                  'shrink-0 rounded-md text-[10px] font-extrabold tracking-wide uppercase',
+                  style.bg, style.text,
+                  owned
+                    ? 'px-1.5 py-1 ring-1 ring-green-400/60'
+                    : subscribedProviderIds && subscribedProviderIds.size > 0
+                      ? 'px-2.5 py-1 opacity-50'
+                      : 'px-2.5 py-1',
                 )}
               >
-                {p.name}
+                {owned ? (
+                  <span className="flex items-center gap-0.5">
+                    <Check className="h-2.5 w-2.5" />
+                    {p.name}
+                  </span>
+                ) : p.name}
               </div>
             );
           })}

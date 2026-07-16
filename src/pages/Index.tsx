@@ -7,8 +7,10 @@ import { SearchBar } from '@/components/SearchBar';
 import { SearchResults } from '@/components/SearchResults';
 import { PlatformFilter, type PlatformFilterItem } from '@/components/PlatformFilter';
 import { TypeFilter } from '@/components/TypeFilter';
-import { Tv, Loader2, Plus, ArrowLeft, Info, Bookmark, Layers } from 'lucide-react';
+import { Tv, Loader2, Plus, ArrowLeft, Info, Bookmark, Layers, ChevronRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { useAuth } from '@/hooks/useAuth';
+import { useUserSubscriptions } from '@/hooks/useUserSubscriptions';
 
 // Map legacy TypeFilter values → home-feed category
 function typeToCategory(t: string | undefined): FeedCategory {
@@ -20,6 +22,9 @@ function typeToCategory(t: string | undefined): FeedCategory {
 }
 
 const Index = () => {
+  const { user } = useAuth();
+  const { providerIdSet } = useUserSubscriptions();
+
   const {
     results: searchResults,
     loading: searchLoading,
@@ -183,13 +188,27 @@ const Index = () => {
               onSelect={setSelectedProviderSlug}
             />
 
+            {user && providerIdSet.size === 0 && (
+              <Link
+                to="/subscriptions"
+                className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-primary/10 border border-primary/20 text-xs text-primary hover:bg-primary/15 transition-colors"
+              >
+                <Layers className="h-3.5 w-3.5 shrink-0" />
+                <span>Üyeliklerini işaretle, hangi platformların sende olduğunu içeriklerde gösterelim</span>
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 ml-auto" />
+              </Link>
+            )}
+
             {(providersLoading || feedLoading) ? (
               <div className="flex items-center justify-center py-20">
                 <Loader2 className="h-6 w-6 animate-spin text-primary" />
               </div>
             ) : feedResults.length > 0 ? (
               <>
-                <SearchResults results={feedResults} />
+                <SearchResults
+                  results={feedResults}
+                  subscribedProviderIds={user ? providerIdSet : undefined}
+                />
                 <div ref={sentinelRef} className="h-8" aria-hidden />
                 {loadingMore && (
                   <div className="flex items-center justify-center py-4">

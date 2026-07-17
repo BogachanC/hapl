@@ -164,8 +164,32 @@ serve(async (req) => {
           }
 
           if (watchers && watchers.length > 0) {
-            const notifRows = watchers.map((w: any) => ({
-              user_id: w.user_id,
+            // Filter out users who opted out of email notifications.
+            const watcherIds = watchers.map((w: any) => w.user_id as string);
+            const { data: optedOut } = await sb
+              .from("notification_preferences")
+              .select("user_id")
+              .eq("email_enabled", false)
+              .in("user_id", watcherIds);
+            const optedOutSet = new Set(
+              (optedOut ?? []).map((r: any) => r.user_id as string),
+            );
+            const eligibleIds = watcherIds.filter(
+              (id) => !optedOutSet.has(id),
+            );
+
+            if (eligibleIds.length === 0) {
+              changesSkipped++;
+              await sb
+                .from("availability_changes")
+                .update({ processed_at: new Date().toISOString() })
+                .eq("id", change.id);
+              changesProcessed++;
+              continue;
+            }
+
+            const notifRows = eligibleIds.map((uid) => ({
+              user_id: uid,
               availability_change_id: change.id,
               title_id: change.title_id,
               provider_id: change.provider_id,

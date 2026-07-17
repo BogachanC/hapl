@@ -212,10 +212,40 @@ serve(async (req) => {
       byUser.set(row.user_id, arr);
     }
 
-    // ── Fetch user emails in batch via admin API ───────────────────────
+    // ── Filter out users who opted out of email notifications ──────────
     const userIds = [...byUser.keys()];
+    const { data: optedOut } = await sb
+      .from("notification_preferences")
+      .select("user_id")
+      .eq("email_enabled", false)
+      .in("user_id", userIds);
+    const optedOutSet = new Set(
+      (optedOut ?? []).map((r: any) => r.user_id as string),
+    );
+    for (const uid of optedOutSet) {
+      console.log(`[hapl-deliver] skipping user=${uid}: opted out of email notifications`);
+      byUser.delete(uid);
+    }
+
+    if (byUser.size === 0) {
+      console.log("[hapl-deliver] all users in batch opted out");
+      if (runId) {
+        await sb.from("catalog_job_runs").update({
+          finished_at: new Date().toISOString(),
+          ok: true, processed: 0, changed: 0, failed: 0,
+          payload: { batch, lock_owner: owner, all_opted_out: true },
+        }).eq("id", runId);
+      }
+      return new Response(
+        JSON.stringify({ ok: true, batch, notifications_sent: 0, emails_sent: 0, failed: 0, opted_out: optedOutSet.size, run_id: runId }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    // ── Fetch user emails in batch via admin API ───────────────────────
+    const eligibleUserIds = [...byUser.keys()];
     const emailMap = new Map<string, string>();
-    for (const uid of userIds) {
+    for (const uid of eligibleUserIds) {
       const { data: userData, error: userErr } = await sb.auth.admin.getUserById(uid);
       if (userErr || !userData?.user?.email) {
         console.warn(`[hapl-deliver] no email for user=${uid}: ${userErr?.message ?? "missing"}`);

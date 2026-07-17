@@ -538,6 +538,27 @@ export type Database = {
           },
         ]
       }
+      notification_preferences: {
+        Row: {
+          created_at: string
+          email_enabled: boolean
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          email_enabled?: boolean
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          email_enabled?: boolean
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       pending_notifications: {
         Row: {
           action: string
@@ -764,6 +785,7 @@ export type Database = {
           firecrawl_priority: number
           id: string
           is_active: boolean
+          is_local: boolean
           slug: string
           sort_order: number
           tmdb_names: string[]
@@ -777,6 +799,7 @@ export type Database = {
           firecrawl_priority?: number
           id?: string
           is_active?: boolean
+          is_local?: boolean
           slug: string
           sort_order?: number
           tmdb_names?: string[]
@@ -790,6 +813,7 @@ export type Database = {
           firecrawl_priority?: number
           id?: string
           is_active?: boolean
+          is_local?: boolean
           slug?: string
           sort_order?: number
           tmdb_names?: string[]
@@ -817,6 +841,35 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      user_subscriptions: {
+        Row: {
+          created_at: string
+          id: string
+          provider_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          provider_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          provider_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_subscriptions_provider_id_fkey"
+            columns: ["provider_id"]
+            isOneToOne: false
+            referencedRelation: "streaming_providers"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       watchlist_items: {
         Row: {

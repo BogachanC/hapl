@@ -6,6 +6,7 @@ export interface StreamingProvider {
   slug: string;
   display_name: string;
   sort_order: number;
+  is_local: boolean;
 }
 
 /**
@@ -22,7 +23,7 @@ export function useStreamingProviders() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("streaming_providers")
-        .select("id, slug, display_name, sort_order")
+        .select("id, slug, display_name, sort_order, is_local")
         .eq("is_active", true)
         .order("sort_order", { ascending: true });
       if (error) throw error;

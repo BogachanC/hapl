@@ -234,7 +234,7 @@ function ProfileSection({
                   )}
                   title={opt.label}
                 >
-                  <opt.Icon className="h-4.5 w-4.5 text-foreground" />
+                  <opt.Icon className="h-5 w-5 text-foreground" />
                 </button>
               ))}
             </div>

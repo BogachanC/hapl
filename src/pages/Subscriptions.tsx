@@ -2,40 +2,15 @@ import { Link } from 'react-router-dom';
 import { ArrowLeft, Layers, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { useStreamingProviders } from '@/hooks/useStreamingProviders';
 import { useUserSubscriptions } from '@/hooks/useUserSubscriptions';
 import { getPlatformStyle } from '@/lib/platform-colors';
 import { cn } from '@/lib/utils';
 
-interface SubscriptionProvider {
-  id: string;
-  slug: string;
-  display_name: string;
-  sort_order: number;
-  is_local: boolean;
-}
-
-function useSubscriptionProviders() {
-  return useQuery({
-    queryKey: ['streaming_providers_with_local'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('streaming_providers')
-        .select('id, slug, display_name, sort_order, is_local')
-        .eq('is_active', true)
-        .order('sort_order', { ascending: true });
-      if (error) throw error;
-      return (data || []) as SubscriptionProvider[];
-    },
-    staleTime: 5 * 60 * 1000,
-  });
-}
-
 const Subscriptions = () => {
   const { user, loading: authLoading } = useAuth();
-  const { data: providers, isLoading: providersLoading } = useSubscriptionProviders();
+  const { data: providers, isLoading: providersLoading } = useStreamingProviders();
   const {
     providerIdSet,
     subscribe,

@@ -7,7 +7,7 @@ import { SearchBar } from '@/components/SearchBar';
 import { SearchResults } from '@/components/SearchResults';
 import { PlatformFilter, type PlatformFilterItem } from '@/components/PlatformFilter';
 import { TypeFilter } from '@/components/TypeFilter';
-import { Tv, Loader2, Plus, ArrowLeft, Info, Bookmark, Layers, ChevronRight } from 'lucide-react';
+import { Tv, Loader2, Plus, ArrowLeft, Info, Bookmark, Layers, ChevronRight, User } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useUserSubscriptions } from '@/hooks/useUserSubscriptions';
@@ -139,6 +139,13 @@ const Index = () => {
                 aria-label="Hakkında"
               >
                 <Info className="h-4 w-4 text-muted-foreground" />
+              </Link>
+              <Link
+                to="/account"
+                className="h-9 w-9 rounded-xl bg-secondary/80 hover:bg-primary/20 border border-border/30 hover:border-primary/40 flex items-center justify-center transition-all duration-200 hover:scale-105 active:scale-95"
+                aria-label="Hesabım"
+              >
+                <User className="h-4 w-4 text-muted-foreground" />
               </Link>
               <Link
                 to="/admin"

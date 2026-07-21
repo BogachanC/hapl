@@ -10,6 +10,7 @@ import About from "./pages/About.tsx";
 import Watchlist from "./pages/Watchlist.tsx";
 import Subscriptions from "./pages/Subscriptions.tsx";
 import Account from "./pages/Account.tsx";
+import Savings from "./pages/Savings.tsx";
 import NotFound from "./pages/NotFound.tsx";
 import ProtectedAdminRoute from "./components/ProtectedAdminRoute.tsx";
 
@@ -28,6 +29,7 @@ const App = () => (
           <Route path="/watchlist" element={<Watchlist />} />
           <Route path="/subscriptions" element={<Subscriptions />} />
           <Route path="/account" element={<Account />} />
+          <Route path="/savings" element={<Savings />} />
           <Route
             path="/admin"
             element={

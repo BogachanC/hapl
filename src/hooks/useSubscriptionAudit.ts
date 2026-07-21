@@ -81,7 +81,7 @@ export function useSubscriptionAudit() {
     staleTime: 2 * 60 * 1000,
   });
 
-  if (import.meta.env.DEV && auditResult) {
+  if (auditResult) {
     console.log("[useSubscriptionAudit] result:", JSON.stringify(auditResult, null, 2));
   }
 

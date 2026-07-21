@@ -142,7 +142,7 @@ const Account = () => {
               <LogOut className="h-4 w-4" />
               Çıkış Yap
             </Button>
-            {import.meta.env.DEV && <AuditDebug />}
+            <AuditDebug />
           </>
         )}
       </main>

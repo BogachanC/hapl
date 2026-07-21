@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Bell, Bookmark, Check, ChevronRight, Layers, Loader2, LogOut, Pencil, User } from 'lucide-react';
+import { ArrowLeft, Bell, Bookmark, Check, ChevronRight, Layers, Loader2, LogOut, Pencil, PiggyBank, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
@@ -11,7 +11,8 @@ import { useProfile } from '@/hooks/useProfile';
 import { useNotificationPreferences } from '@/hooks/useNotificationPreferences';
 import { AVATAR_OPTIONS, getAvatarByKey, getInitial } from '@/lib/avatars';
 import { cn } from '@/lib/utils';
-import AuditDebug from '@/components/AuditDebug';
+import { useSubscriptionAudit } from '@/hooks/useSubscriptionAudit';
+import { formatTRY } from '@/lib/format';
 
 const Account = () => {
   const navigate = useNavigate();
@@ -20,6 +21,7 @@ const Account = () => {
   const { subscriptions, isLoading: subsLoading } = useUserSubscriptions();
   const { profile, isLoading: profileLoading, updateProfile, updating: profileUpdating } = useProfile();
   const { emailEnabled, isLoading: notifLoading, setEmailEnabled, updating: notifUpdating } = useNotificationPreferences();
+  const { data: audit } = useSubscriptionAudit();
 
   const handleSignOut = async () => {
     await signOut();
@@ -131,6 +133,16 @@ const Account = () => {
                 title="Üyeliklerim"
                 subtitle={`${subscriptions.length} platform`}
               />
+              <NavCard
+                to="/savings"
+                icon={<PiggyBank className="h-4 w-4" />}
+                title="Tasarruf"
+                subtitle={
+                  audit && !audit.insufficientWatchlist && audit.wastedMonthlySpend > 0
+                    ? `${formatTRY(audit.wastedMonthlySpend)} tasarruf fırsatı`
+                    : 'Abonelik denetimi'
+                }
+              />
             </div>
 
             {/* Sign out */}
@@ -142,7 +154,6 @@ const Account = () => {
               <LogOut className="h-4 w-4" />
               Çıkış Yap
             </Button>
-            <AuditDebug />
           </>
         )}
       </main>

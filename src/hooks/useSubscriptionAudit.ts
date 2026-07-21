@@ -81,10 +81,6 @@ export function useSubscriptionAudit() {
     staleTime: 2 * 60 * 1000,
   });
 
-  if (auditResult) {
-    console.log("[useSubscriptionAudit] result:", JSON.stringify(auditResult, null, 2));
-  }
-
   return {
     data: auditResult,
     isLoading: !depsReady || auditLoading,

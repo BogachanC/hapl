@@ -3,7 +3,7 @@ import { ArrowLeft, Layers, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useAuth } from '@/hooks/useAuth';
-import { useStreamingProviders } from '@/hooks/useStreamingProviders';
+import { useStreamingProviders, type StreamingProvider } from '@/hooks/useStreamingProviders';
 import { useUserSubscriptions } from '@/hooks/useUserSubscriptions';
 import { getPlatformStyle } from '@/lib/platform-colors';
 import { cn } from '@/lib/utils';
@@ -112,7 +112,7 @@ function Section({
   onToggle,
 }: {
   title: string;
-  providers: SubscriptionProvider[];
+  providers: StreamingProvider[];
   subscribedIds: Set<string>;
   onToggle: (providerId: string, checked: boolean) => void;
 }) {

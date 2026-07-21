@@ -37,6 +37,7 @@ export interface AuditResult {
   awaitingDataTitles: number;
   totalMonthlySpend: number;
   wastedMonthlySpend: number;
+  unpricedProviderCount: number;
 }
 
 export function computeAudit(input: {
@@ -72,6 +73,7 @@ export function computeAudit(input: {
       awaitingDataTitles: 0,
       totalMonthlySpend: 0,
       wastedMonthlySpend: 0,
+      unpricedProviderCount: 0,
     };
   }
 
@@ -116,6 +118,14 @@ export function computeAudit(input: {
     provUnique.set(pid, new Set());
   }
 
+  // Providers with enough data to count toward uniqueness denominator.
+  // Excludes insufficient_data; includes bundle and price_unknown (real coverage).
+  const dataSufficientSubs = new Set(
+    subscribedProviderIds.filter(
+      (pid) => (providerRowCounts[pid] ?? 0) >= MIN_PROVIDER_ROWS,
+    ),
+  );
+
   for (const titleId of watchlistTitleIds) {
     const provSet = titleProviders.get(titleId);
 
@@ -134,11 +144,17 @@ export function computeAudit(input: {
     }
 
     if (subscribedCovering.length > 0) {
+      // NOTE: coveredTitles counts any subscribed provider, even sub-gate ones.
+      // A title covered only by a sub-gate provider is an edge case with no
+      // current real-data instance; left as-is intentionally.
       coveredTitles++;
 
-      // Unique: exactly one subscribed provider covers it, AND not freeish
-      if (subscribedCovering.length === 1 && !titleHasFreeish.has(titleId)) {
-        provUnique.get(subscribedCovering[0])!.add(titleId);
+      // Unique: exactly one data-sufficient subscribed provider covers it, AND not freeish
+      const sufficientCovering = subscribedCovering.filter((pid) =>
+        dataSufficientSubs.has(pid),
+      );
+      if (sufficientCovering.length === 1 && !titleHasFreeish.has(titleId)) {
+        provUnique.get(sufficientCovering[0])!.add(titleId);
       }
     } else {
       gapTitles++;
@@ -149,6 +165,7 @@ export function computeAudit(input: {
   const providerAudits: ProviderAudit[] = [];
   let totalMonthlySpend = 0;
   let wastedMonthlySpend = 0;
+  let unpricedProviderCount = 0;
 
   for (const pid of subscribedProviderIds) {
     const sp = providerMap.get(pid);
@@ -161,6 +178,12 @@ export function computeAudit(input: {
     const plan = cheapestMonthlyPlan(plans, pid);
     const monthlyPrice = plan ? plan.price_try : null;
     const planCode = plan ? plan.code : null;
+
+    if (monthlyPrice !== null) {
+      totalMonthlySpend += monthlyPrice;
+    } else {
+      unpricedProviderCount++;
+    }
 
     // Determine status
     let status: ProviderAuditStatus = "ok";
@@ -179,9 +202,8 @@ export function computeAudit(input: {
       else if (coveredCount > 0) verdict = "review";
       else verdict = "cancel";
 
-      if (monthlyPrice !== null) {
-        totalMonthlySpend += monthlyPrice;
-        if (verdict === "cancel") wastedMonthlySpend += monthlyPrice;
+      if (verdict === "cancel" && monthlyPrice !== null) {
+        wastedMonthlySpend += monthlyPrice;
       }
     }
 
@@ -207,5 +229,6 @@ export function computeAudit(input: {
     awaitingDataTitles,
     totalMonthlySpend,
     wastedMonthlySpend,
+    unpricedProviderCount,
   };
 }

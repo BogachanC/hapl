@@ -125,6 +125,7 @@ const Savings = () => {
         <SummaryBlock
           totalMonthlySpend={audit.totalMonthlySpend}
           wastedMonthlySpend={audit.wastedMonthlySpend}
+          unpricedProviderCount={audit.unpricedProviderCount}
         />
 
         <div className="space-y-2.5">
@@ -172,9 +173,11 @@ function Header() {
 function SummaryBlock({
   totalMonthlySpend,
   wastedMonthlySpend,
+  unpricedProviderCount,
 }: {
   totalMonthlySpend: number;
   wastedMonthlySpend: number;
+  unpricedProviderCount: number;
 }) {
   return (
     <div className="p-4 rounded-xl bg-card border border-border/50 space-y-3">
@@ -190,7 +193,12 @@ function SummaryBlock({
           </div>
         )}
       </div>
-      {wastedMonthlySpend === 0 && (
+      {unpricedProviderCount > 0 && (
+        <p className="text-[11px] text-muted-foreground">
+          {unpricedProviderCount} platform için fiyat bilgisi yok.
+        </p>
+      )}
+      {wastedMonthlySpend === 0 && unpricedProviderCount === 0 && (
         <p className="text-xs text-muted-foreground">
           Aboneliklerinin hepsi listende karşılığı olan içerik sunuyor.
         </p>
@@ -236,18 +244,21 @@ function ProviderRow({ provider }: { provider: ProviderAudit }) {
       labelClass: 'text-destructive bg-destructive/10',
       borderClass: 'border-destructive/30',
       body: `${formatTRY(provider.monthlyPrice)} ödüyorsun ama listendeki hiçbir başlığı karşılamıyor.`,
+      showPrice: false,
     },
     review: {
       label: 'Gözden geçir',
       labelClass: 'text-amber-600 dark:text-amber-400 bg-amber-500/10',
       borderClass: 'border-amber-500/30',
       body: `${provider.coveredCount} başlığı karşılıyor ama hiçbirini tek başına karşılamıyor — iptal edersen bir şey kaybetmezsin.`,
+      showPrice: true,
     },
     keep: {
       label: 'Tut',
       labelClass: 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/10',
       borderClass: 'border-emerald-500/30',
       body: `${provider.coveredCount} başlığı karşılıyor, ${provider.uniqueCount} tanesini tek başına.`,
+      showPrice: true,
     },
   } as const;
 
@@ -274,9 +285,11 @@ function ProviderRow({ provider }: { provider: ProviderAudit }) {
       </div>
       <div className="flex items-baseline justify-between">
         <p className="text-[11px] text-muted-foreground flex-1">{cfg.body}</p>
-        <p className="text-xs font-medium text-foreground shrink-0 ml-2">
-          {formatTRY(provider.monthlyPrice)}
-        </p>
+        {cfg.showPrice && (
+          <p className="text-xs font-medium text-foreground shrink-0 ml-2">
+            {formatTRY(provider.monthlyPrice)}
+          </p>
+        )}
       </div>
     </div>
   );

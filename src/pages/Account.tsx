@@ -11,6 +11,7 @@ import { useProfile } from '@/hooks/useProfile';
 import { useNotificationPreferences } from '@/hooks/useNotificationPreferences';
 import { AVATAR_OPTIONS, getAvatarByKey, getInitial } from '@/lib/avatars';
 import { cn } from '@/lib/utils';
+import AuditDebug from '@/components/AuditDebug';
 
 const Account = () => {
   const navigate = useNavigate();
@@ -141,6 +142,7 @@ const Account = () => {
               <LogOut className="h-4 w-4" />
               Çıkış Yap
             </Button>
+            {import.meta.env.DEV && <AuditDebug />}
           </>
         )}
       </main>
